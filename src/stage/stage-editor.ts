@@ -10,7 +10,8 @@ import { downloadBlob } from "../core/download";
 import { packTileset } from "../tile/tile-pack";
 import { resolveCell, EDGE16_SLOTS, maskGlyph } from "./autotile";
 import { generateTransitionSheet } from "./transition-gen";
-import { classifyTileBlob, tileCenter } from "./classify";
+import { classifyTileBlob, tileCenter, isSeamlessFill, colorDist, colorName } from "./classify";
+import type { RGB } from "./classify";
 import { importSourceDataUrl } from "../core/image";
 import type { Terrain, TilesetDoc, TileDef } from "../core/types";
 
@@ -20,6 +21,8 @@ interface RefMeta {
   cellsW: number;
   cellsH: number;
   blocked: boolean;
+  /** 1-cell tile with no baked border — safe to paint as a contiguous area. */
+  seamless: boolean;
 }
 
 interface Local {
@@ -306,11 +309,15 @@ export function mountStageEditor(root: HTMLElement): Editor {
         const ref = `${ts.id}/${tile.id}`;
         // Keep native aspect (no squish) — used both for terrain cells (drawn
         // stretched to one cell) and multi-cell objects (drawn to footprint).
-        L.tileImg.set(ref, cropCanvas(keyed, ix, iy, iw, ih));
+        const crop = cropCanvas(keyed, ix, iy, iw, ih);
+        L.tileImg.set(ref, crop);
+        const cellsW = Math.max(1, Math.round(iw / unit));
+        const cellsH = Math.max(1, Math.round(ih / unit));
         L.refMeta.set(ref, {
-          cellsW: Math.max(1, Math.round(iw / unit)),
-          cellsH: Math.max(1, Math.round(ih / unit)),
-          blocked: tile.blocked
+          cellsW,
+          cellsH,
+          blocked: tile.blocked,
+          seamless: cellsW === 1 && cellsH === 1 && isSeamlessFill(crop)
         });
       }
     }
@@ -457,7 +464,12 @@ export function mountStageEditor(root: HTMLElement): Editor {
           c.style.objectFit = "contain"; // preserve aspect in the square swatch
           sw.append(c);
         }
-        if (big) sw.append(el("span.badge", { style: { left: "-2px", right: "auto", color: "#7ee0a0" } }, "◳"));
+        if (big) sw.append(el("span.badge", { style: { left: "-2px", right: "auto", color: "#7ee0a0" }, title: "object (multi-cell)" }, "◳"));
+        else if (!L.refMeta.get(ref)?.seamless) {
+          // Bordered 1-cell tile (pond/patch with baked edges): painting it raw
+          // repeats the border. Flag it so users build a terrain instead.
+          sw.append(el("span.badge", { style: { left: "-2px", right: "auto", color: "#ffcf6b" }, title: "edged tile — paint as a Terrain, not directly (or it tiles its border)" }, "◱"));
+        }
         if (tile.blocked) sw.append(el("span.badge", {}, "⛌"));
         row.append(sw);
       }
@@ -533,6 +545,8 @@ export function mountStageEditor(root: HTMLElement): Editor {
     });
     sec.append(list,
       el("div.hint", {}, "Order = priority (p0 lowest). Higher terrains own their borders — paint a base everywhere (fill), then patches/roads on top. ▲ raises priority."),
+      el("div.btn-row", { style: { marginTop: "6px" } },
+        button("✨ Auto-create terrains from tileset", () => autoCreateTerrains(), "primary")),
       el("div.btn-row", { style: { marginTop: "6px" } },
         button("+ Terrain", () => newTerrain("edge16")),
         button("+ Road", () => newTerrain("path"))));
@@ -695,6 +709,91 @@ export function mountStageEditor(root: HTMLElement): Editor {
     L.tool = "terrain";
     setStatus(`Auto-built "${name}" (blob47): ${Object.keys(roles).length} configurations from ${scanned} primary tiles`);
     refreshCanvasInspector();
+  }
+
+  /** One-click: cluster a tileset's seamless fills into surfaces and auto-build
+   * a paintable blob47 terrain for each (HoMM3-style "pick a surface, paint").
+   * Largest surface = base (lowest priority); water sorts to highest. */
+  async function autoCreateTerrains(): Promise<void> {
+    const project = getProject();
+    const d = doc();
+    const tsId = (L.activeRef && L.activeRef.split("/")[0]) || project.tilesets[0]?.id;
+    const ts = project.tilesets.find((t) => t.id === tsId);
+    if (!ts) { setStatus("Slice a tileset first"); return; }
+
+    // Candidate terrain tiles = roughly square, medium-sized source tiles
+    // (independent of the current tile size, which may be wrong). Cluster these
+    // by centre colour to discover surfaces.
+    type Fill = { ref: string; color: RGB };
+    const fills: Fill[] = [];
+    const sizes: number[] = [];
+    for (const tile of ts.tiles) {
+      const lo = Math.min(tile.w, tile.h), hi = Math.max(tile.w, tile.h);
+      if (lo < 40 || hi > 144 || lo / hi < 0.7) continue; // not a square-ish terrain tile
+      const img = L.tileImg.get(`${tsId}/${tile.id}`);
+      if (!img) continue;
+      const c = tileCenter(img);
+      if (!c) continue;
+      fills.push({ ref: `${tsId}/${tile.id}`, color: c });
+      sizes.push(Math.round((tile.w + tile.h) / 2));
+    }
+    if (fills.length < 2) { setStatus("No square terrain tiles found — slice with a grid first"); return; }
+    // Match the tile size to the terrain tiles so cells/proportions are right.
+    sizes.sort((a, b) => a - b);
+    const unit = sizes[sizes.length >> 1];
+
+    type Cluster = { color: RGB; sum: RGB; members: Fill[] };
+    const clusters: Cluster[] = [];
+    for (const f of fills) {
+      let best: Cluster | null = null, bd = Infinity;
+      for (const cl of clusters) { const d = colorDist(cl.color, f.color); if (d < bd) { bd = d; best = cl; } }
+      if (best && bd < 58) {
+        best.members.push(f);
+        best.sum = [best.sum[0] + f.color[0], best.sum[1] + f.color[1], best.sum[2] + f.color[2]];
+        best.color = [best.sum[0] / best.members.length, best.sum[1] / best.members.length, best.sum[2] / best.members.length];
+      } else {
+        clusters.push({ color: [...f.color], sum: [...f.color], members: [f] });
+      }
+    }
+    const surfaces = clusters.filter((c) => c.members.length >= 2).sort((a, b) => b.members.length - a.members.length);
+    if (!surfaces.length) { setStatus("No dominant surfaces found — try slicing with a fixed grid"); return; }
+
+    const built: Array<{ color: RGB; size: number; terrain: Terrain }> = [];
+    for (const surf of surfaces) {
+      const primary = surf.color;
+      const secondary = (surfaces.find((s) => s !== surf) ?? surf).color;
+      const roles: Record<number, string> = {};
+      const filled = new Set<number>();
+      for (const tile of ts.tiles) {
+        const ref = `${tsId}/${tile.id}`;
+        const img = L.tileImg.get(ref);
+        if (!img) continue;
+        const cl = classifyTileBlob(img, primary, secondary);
+        if (!cl || !cl.centerPrimary) continue;
+        if (!filled.has(cl.key)) { roles[cl.key] = ref; filled.add(cl.key); }
+      }
+      if (!roles[255]) roles[255] = surf.members[0].ref;
+      built.push({ color: primary, size: surf.members.length, terrain: { id: uid("terr"), name: colorName(primary), tilesetId: tsId, kind: "blob47", roles } });
+    }
+    // Priority: largest ground = base (low); water highest.
+    const water = built.filter((b) => colorName(b.color) === "water");
+    const rest = built.filter((b) => colorName(b.color) !== "water").sort((a, b) => b.size - a.size);
+    const ordered = [...rest, ...water];
+    const counts: Record<string, number> = {};
+    for (const b of ordered) { const base = b.terrain.name; counts[base] = (counts[base] ?? 0) + 1; if (counts[base] > 1) b.terrain.name = `${base}-${counts[base]}`; }
+    mutate((p) => {
+      ts.tileSize = unit;
+      if (d) d.tileSize = unit;
+      for (const b of ordered) p.terrains.push(b.terrain);
+    });
+    await ensureTileImages(); // tile size changed → recompute crops/footprints
+    if (d) vp.fit(d.cols * d.tileSize, d.rows * d.tileSize);
+    L.activeTerrainId = ordered[0]?.terrain.id ?? null;
+    L.tool = "terrain";
+    setStatus(`Auto-created ${ordered.length} terrain(s) @${unit}px: ${ordered.map((b) => b.terrain.name).join(", ")} — pick one + paint`);
+    renderSidebar();
+    renderInspector();
+    vp.render();
   }
 
   function blobToDataUrl(blob: Blob): Promise<string> {

@@ -186,9 +186,22 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
    at its true proportions across multiple cells (trees, rocks, buildings). They
    y-sort (nearer objects overlap farther ones) and snap to their base. Click an
    object to select/move it.
-5. **Autotile terrains** — for tilesets with edge/corner transition tiles:
-   **+ Terrain**, then click a palette tile and click one of the 16 edge slots to
-   assign it (each slot's glyph shows which sides connect; right-click clears).
+5. **Paint *areas* (the HoMM3 way)** — the fastest path: slice a biome sheet,
+   then in the Stage Editor click **✨ Auto-create terrains from tileset**. It
+   clusters the sheet's ground/water surfaces, sets a matching tile size, and
+   builds a ready-to-paint terrain for each (grass, dirt, sand, water…) in
+   priority order. Pick one, grab the **terrain** tool + a **brush**, and paint —
+   interiors use the seamless centre tile and only the perimeter gets
+   edge/corner tiles, so you get **contiguous lakes/fields, not a grid of
+   bordered squares**.
+   - **Palette badges**: `◳` = multi-cell object; `◱` (amber) = an *edged* tile
+     (pond/patch with a baked border) — painting it raw repeats the border, so
+     make it a **terrain** instead; no badge = a seamless fill you can paint
+     directly.
+6. **Autotile terrains (manual)** — for finer control or sheets where
+   auto-create misses: **+ Terrain**, then click a palette tile and click one of
+   the 16 edge slots to assign it (each slot's glyph shows which sides connect;
+   right-click clears).
    Pick the **terrain** tool and paint — every cell auto-picks the right
    edge/corner tile from its neighbours, so grass↔dirt↔water borders resolve
    themselves. Resolved tiles land in the normal tile layer, so export is

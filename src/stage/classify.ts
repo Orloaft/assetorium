@@ -27,9 +27,43 @@ export function avgColor(c: HTMLCanvasElement, rx: number, ry: number, rw: numbe
 }
 
 const dist2 = (a: RGB, b: RGB): number => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+export const colorDist = (a: RGB, b: RGB): number => Math.sqrt(dist2(a, b));
 
 export function tileCenter(c: HTMLCanvasElement): RGB | null {
   return avgColor(c, c.width * 0.32, c.height * 0.32, c.width * 0.36, c.height * 0.36);
+}
+
+/** A tile is a "seamless fill" when its 4 edges read close to its centre (no
+ * baked-in border) — safe to paint as a contiguous area. A bordered/feature
+ * tile (pond with rock rim, patch with edges) fails this and should be painted
+ * as a terrain or placed as an object instead. */
+export function isSeamlessFill(c: HTMLCanvasElement, tol = 62): boolean {
+  const center = tileCenter(c);
+  if (!center) return false;
+  const w = c.width, h = c.height;
+  const edges: Array<RGB | null> = [
+    avgColor(c, w * 0.2, 1, w * 0.6, h * 0.14),
+    avgColor(c, w * 0.2, h * 0.85, w * 0.6, h * 0.14),
+    avgColor(c, 1, h * 0.2, w * 0.14, h * 0.6),
+    avgColor(c, w * 0.85, h * 0.2, w * 0.14, h * 0.6)
+  ];
+  for (const e of edges) {
+    if (!e) return false; // transparent edge => not a solid fill
+    if (colorDist(e, center) > tol) return false;
+  }
+  return true;
+}
+
+/** A rough human name for a fill colour, for auto-naming terrains. */
+export function colorName(c: RGB): string {
+  const [r, g, b] = c;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  if (mx < 70) return "dark";
+  if (mx - mn < 36) return mx > 175 ? "snow" : "rock";
+  if (b > r && b > g) return "water";
+  if (g >= r && g >= b) return "grass";
+  if (r > g && g > b) return mx > 175 ? "sand" : "dirt";
+  return "ground";
 }
 
 /** Classify a tile against two fills. Returns the edge16 mask of sides that
