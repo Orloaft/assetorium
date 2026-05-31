@@ -25,6 +25,8 @@ interface Local {
   keyed: HTMLCanvasElement | null;
   keyedKey: string;
   dragBox: FrameBox | null;
+  previewFps: number;
+  previewZoom: number;
 }
 
 export function mountSpriteStudio(root: HTMLElement): Editor {
@@ -38,7 +40,9 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
     detect: { minSize: 12, rowTolerance: 24, pad: 1 },
     keyed: null,
     keyedKey: "",
-    dragBox: null
+    dragBox: null,
+    previewFps: 8,
+    previewZoom: 3
   };
 
   const workspace = el("div.workspace");
@@ -390,14 +394,36 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
   function renderPreviewSection(d: SpriteDoc): HTMLElement {
     const stage = el("div.anim-stage");
     stage.append(animator.canvas);
+    const count = L.selection.length || d.frames.length;
+    const label = L.selection.length ? `selected (${L.selection.length})` : `all (${d.frames.length})`;
     return el("div.section", {},
       el("h3", {}, "Preview"),
       stage,
       el("div.btn-row", { style: { marginTop: "6px" } },
+        button(`▶ Preview ${label}`, () => previewFrames(), count ? "primary" : ""),
+        numberField("fps", L.previewFps, (v) => { L.previewFps = Math.max(1, v); previewFrames(); }, { min: 1, max: 60, width: 48 })),
+      el("div.btn-row", { style: { marginTop: "6px" } },
         button(animator.isPlaying() ? "⏸ Pause" : "▶ Play", () => { animator.isPlaying() ? animator.pause() : animator.play(); renderInspectorSoon(); }),
-        button("Zoom +", () => animator.setZoom(Math.min(8, 4))),
-        el("span.hint", {}, "Click a clip row to preview it.")),
-      el("div.hint", {}, d.clips.length ? "" : "Rig an animation to preview."));
+        button("－", () => { L.previewZoom = Math.max(1, L.previewZoom - 1); animator.setZoom(L.previewZoom); }, "sm"),
+        button("＋", () => { L.previewZoom = Math.min(10, L.previewZoom + 1); animator.setZoom(L.previewZoom); }, "sm"),
+        el("span.tag", {}, `${L.previewZoom}×`)),
+      el("div.hint", {}, "Preview plays your selected frames (in click order), or all frames if none are selected. Click a clip row above to preview that animation instead."));
+  }
+
+  /** Quick scratch preview: play the selected frames (in selection order) or
+   * all document frames. Independent of clips — handy before rigging. */
+  function previewFrames(): void {
+    const d = doc();
+    if (!d || !L.keyed) return;
+    const ids = L.selection.length ? L.selection : d.frames.map((f) => f.id);
+    const frames = ids
+      .map((id) => d.frames.find((f) => f.id === id))
+      .filter((f): f is FrameBox => !!f)
+      .map((f) => cropCanvas(L.keyed!, f.x, f.y, f.w, f.h));
+    if (!frames.length) { setStatus("No frames to preview"); return; }
+    animator.setZoom(L.previewZoom);
+    animator.setFrames(frames, L.previewFps, true);
+    setStatus(`Previewing ${frames.length} frames at ${L.previewFps}fps`);
   }
 
   // ---- Actions -----------------------------------------------------------
