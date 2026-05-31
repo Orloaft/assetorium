@@ -185,7 +185,7 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
       vp.render();
       return;
     }
-    const key = `${d.sourceId}:${d.chroma.enabled}:${d.chroma.tolerance}`;
+    const key = `${d.sourceId}:${d.chroma.enabled}:${d.chroma.tolerance}:${d.chroma.fringe ?? 0}`;
     if (key === L.keyedKey && L.keyed) return;
     L.keyed = await getKeyedCanvas(d.sourceId, d.chroma);
     L.keyedKey = key;

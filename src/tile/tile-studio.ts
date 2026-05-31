@@ -7,6 +7,7 @@ import { Viewport } from "../core/viewport";
 import { defaultChroma } from "../core/types";
 import type { TilesetDoc, TileDef } from "../core/types";
 import { packTileset } from "./tile-pack";
+import { detectTiles } from "./tile-slicer";
 import { buildZip, textEntry, blobEntry } from "../core/zip";
 import { downloadBlob } from "../core/download";
 
@@ -14,6 +15,7 @@ interface Local {
   tilesetId: string | null;
   selectedTileId: string | null;
   skipEmpty: boolean;
+  detect: { minSize: number; pad: number };
   keyed: HTMLCanvasElement | null;
   keyedKey: string;
 }
@@ -23,6 +25,7 @@ export function mountTileStudio(root: HTMLElement): Editor {
     tilesetId: getProject().tilesets[0]?.id ?? null,
     selectedTileId: null,
     skipEmpty: true,
+    detect: { minSize: 16, pad: 1 },
     keyed: null,
     keyedKey: ""
   };
@@ -73,7 +76,7 @@ export function mountTileStudio(root: HTMLElement): Editor {
   async function reloadKeyed(): Promise<void> {
     const d = doc();
     if (!d || !d.sourceId) { L.keyed = null; L.keyedKey = ""; vp.render(); return; }
-    const key = `${d.sourceId}:${d.chroma.enabled}:${d.chroma.tolerance}`;
+    const key = `${d.sourceId}:${d.chroma.enabled}:${d.chroma.tolerance}:${d.chroma.fringe ?? 0}`;
     if (key === L.keyedKey && L.keyed) return;
     L.keyed = await getKeyedCanvas(d.sourceId, d.chroma);
     L.keyedKey = key;
@@ -167,9 +170,15 @@ export function mountTileStudio(root: HTMLElement): Editor {
         numberField("Inset", G.inset, (v) => mutate(() => (G.inset = v)), { min: 0, width: 50 }),
         checkbox("Skip empty cells", L.skipEmpty, (b) => (L.skipEmpty = b))),
       el("div.btn-row", { style: { marginTop: "6px" } },
-        button("Generate tiles", () => generateTiles(), "primary"),
+        button("Generate from grid", () => generateTiles(), "primary"),
         button("Clear", () => { mutate(() => (d.tiles = [])); L.selectedTileId = null; refreshCanvasInspector(); })),
-      el("div.hint", {}, `${d.tiles.length} tiles. Inset trims a border off each cell (avoids bleed).`)));
+      el("div.divider"),
+      el("div.btn-row", {},
+        numberField("Min size", L.detect.minSize, (v) => (L.detect.minSize = v), { min: 1, width: 56 }),
+        numberField("Pad", L.detect.pad, (v) => (L.detect.pad = v), { min: 0, width: 44 })),
+      el("div.btn-row", { style: { marginTop: "6px" } },
+        button("✨ Auto-detect tiles", () => autoDetectTiles(), "primary")),
+      el("div.hint", {}, `${d.tiles.length} tiles. Auto-detect finds objects separated by the (keyed) background — great for trees/rocks/props. Packed terrain that touches detects as one blob; slice those with the grid above. Inset trims a border off each cell (avoids bleed).`)));
 
     // Selected tile editor
     const sel = d.tiles.find((t) => t.id === L.selectedTileId);
@@ -225,6 +234,20 @@ export function mountTileStudio(root: HTMLElement): Editor {
     }
     mutate(() => (d.tiles = tiles));
     setStatus(`Generated ${tiles.length} tiles`);
+    refreshCanvasInspector();
+  }
+
+  function autoDetectTiles(): void {
+    const d = doc();
+    if (!d || !L.keyed) { setStatus("Pick a source image first"); return; }
+    setStatus("Detecting tiles…");
+    const rects = detectTiles(L.keyed, L.detect);
+    const tiles: TileDef[] = rects.map((r, i) => ({
+      id: uid("t"), char: "", name: `tile-${i}`, x: r.x, y: r.y, w: r.w, h: r.h, blocked: false, sightBlocked: false, tags: []
+    }));
+    mutate(() => (d.tiles = tiles));
+    L.selectedTileId = null;
+    setStatus(`Auto-detected ${tiles.length} tiles`);
     refreshCanvasInspector();
   }
 
