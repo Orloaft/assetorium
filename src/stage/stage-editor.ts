@@ -33,6 +33,8 @@ interface Local {
   refMeta: Map<string, RefMeta>;
   selectedObjectId: string | null;
   activeTerrainId: string | null;
+  brushRadius: number; // 0 = 1 cell, 1 = 3x3, 2 = 5x5 …
+  brushShape: "square" | "circle";
   transFill: string | null;
   transBase: string | null;
   transBand: number;
@@ -60,6 +62,8 @@ export function mountStageEditor(root: HTMLElement): Editor {
     refMeta: new Map(),
     selectedObjectId: null,
     activeTerrainId: null,
+    brushRadius: 0,
+    brushShape: "square",
     transFill: null,
     transBase: null,
     transBand: 10,
@@ -102,6 +106,22 @@ export function mountStageEditor(root: HTMLElement): Editor {
     return { x, y };
   }
 
+  /** Cells covered by the brush centred on (cx,cy), clamped to the grid. */
+  function brushCells(d: StageDoc, cx: number, cy: number): Array<{ x: number; y: number }> {
+    const r = L.brushRadius;
+    if (r <= 0) return [{ x: cx, y: cy }];
+    const cells: Array<{ x: number; y: number }> = [];
+    const rr = (r + 0.35) * (r + 0.35);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (L.brushShape === "circle" && dx * dx + dy * dy > rr) continue;
+        const x = cx + dx, y = cy + dy;
+        if (x >= 0 && y >= 0 && x < d.cols && y < d.rows) cells.push({ x, y });
+      }
+    }
+    return cells;
+  }
+
   function onPaint(wx: number, wy: number, isDown: boolean): void {
     const d = doc();
     if (!d) return;
@@ -124,28 +144,31 @@ export function mountStageEditor(root: HTMLElement): Editor {
     }
     if (L.tool === "collision") {
       if (isDown) L.collisionPaintValue = !d.collision[c.y][c.x];
-      mutate(() => (d.collision[c.y][c.x] = L.collisionPaintValue));
+      mutate(() => { for (const p of brushCells(d, c.x, c.y)) d.collision[p.y][p.x] = L.collisionPaintValue; });
       vp.render();
       return;
     }
     if (L.tool === "terrain") {
       if (!layer || !L.activeTerrainId) { if (isDown) setStatus("Pick or create a terrain first"); return; }
       ensureTerrainGrid(layer, d);
-      if (layer.terrain![c.y][c.x] !== L.activeTerrainId) {
-        mutate(() => { layer.terrain![c.y][c.x] = L.activeTerrainId; });
-        resolveAround(d, layer, c.x, c.y);
-        vp.render();
-      }
+      const cells = brushCells(d, c.x, c.y);
+      let changed = false;
+      mutate(() => { for (const p of cells) if (layer.terrain![p.y][p.x] !== L.activeTerrainId) { layer.terrain![p.y][p.x] = L.activeTerrainId; changed = true; } });
+      if (changed) { resolveSet(d, layer, cells); vp.render(); }
       return;
     }
     if (L.tool === "fill") {
       if (isDown && layer) floodFill(layer, c.x, c.y);
       return;
     }
-    // paint / erase (drag-and-drop placement)
+    // paint / erase (drag-and-drop placement), brush-aware
     if (!layer) return;
-    const ref = L.tool === "erase" ? null : pickRef();
-    if (layer.data[c.y][c.x] !== ref) mutate(() => (layer.data[c.y][c.x] = ref));
+    mutate(() => {
+      for (const p of brushCells(d, c.x, c.y)) {
+        const ref = L.tool === "erase" ? null : pickRef();
+        layer.data[p.y][p.x] = ref;
+      }
+    });
     vp.render();
   }
 
@@ -206,21 +229,35 @@ export function mountStageEditor(root: HTMLElement): Editor {
     }
   }
 
-  /** Re-resolve a cell and its 8 neighbours from terrain membership, writing the
-   * resolved autotile into the visible tile layer. */
-  function resolveAround(d: StageDoc, layer: StageLayer, cx: number, cy: number): void {
+  /** Re-resolve a set of painted cells plus their 8-neighbours from terrain
+   * membership (one mutate), writing resolved autotiles into the tile layer. */
+  /** Priority rank of a terrain id by its order in the project list (higher
+   * index = higher priority = owns boundaries / drawn on top). */
+  function terrainRank(): (id: string | null) => number {
+    const order = new Map(getProject().terrains.map((t, i) => [t.id, i]));
+    return (id) => (id && order.has(id) ? order.get(id)! : -Infinity);
+  }
+
+  function resolveSet(d: StageDoc, layer: StageLayer, cells: Array<{ x: number; y: number }>): void {
     const terrains = getProject().terrains;
+    const rank = terrainRank();
+    const seen = new Set<number>();
     mutate(() => {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const x = cx + dx, y = cy + dy;
-          if (x < 0 || y < 0 || x >= d.cols || y >= d.rows) continue;
-          const tid = layer.terrain?.[y]?.[x];
-          if (!tid) continue;
-          const terrain = terrains.find((t) => t.id === tid);
-          if (!terrain) continue;
-          const ref = resolveCell(terrain, layer.terrain!, x, y, d.cols, d.rows);
-          if (ref) layer.data[y][x] = ref;
+      for (const cell of cells) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const x = cell.x + dx, y = cell.y + dy;
+            if (x < 0 || y < 0 || x >= d.cols || y >= d.rows) continue;
+            const key = y * d.cols + x;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const tid = layer.terrain?.[y]?.[x];
+            if (!tid) continue;
+            const terrain = terrains.find((t) => t.id === tid);
+            if (!terrain) continue;
+            const ref = resolveCell(terrain, layer.terrain!, x, y, d.cols, d.rows, rank);
+            if (ref) layer.data[y][x] = ref;
+          }
         }
       }
     });
@@ -229,6 +266,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
   /** Re-resolve every terrain cell on a layer (after a role assignment changes). */
   function reflowTerrain(d: StageDoc): void {
     const terrains = getProject().terrains;
+    const rank = terrainRank();
     mutate(() => {
       for (const layer of d.layers) {
         if (!layer.terrain) continue;
@@ -238,7 +276,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
             if (!tid) continue;
             const terrain = terrains.find((t) => t.id === tid);
             if (!terrain) continue;
-            const ref = resolveCell(terrain, layer.terrain, x, y, d.cols, d.rows);
+            const ref = resolveCell(terrain, layer.terrain, x, y, d.cols, d.rows, rank);
             if (ref) layer.data[y][x] = ref;
           }
       }
@@ -348,9 +386,14 @@ export function mountStageEditor(root: HTMLElement): Editor {
 
     // hover
     if (L.hover && L.hover.x >= 0 && L.hover.y >= 0 && L.hover.x < d.cols && L.hover.y < d.rows) {
+      // Show the brush footprint for area tools; a single cell otherwise.
+      const brushTools = L.tool === "paint" || L.tool === "erase" || L.tool === "terrain" || L.tool === "collision";
+      const cells = brushTools ? brushCells(d, L.hover.x, L.hover.y) : [{ x: L.hover.x, y: L.hover.y }];
+      g.fillStyle = "rgba(255,207,107,0.18)";
+      for (const p of cells) g.fillRect(p.x * ts, p.y * ts, ts, ts);
       g.strokeStyle = "#ffcf6b";
       g.lineWidth = 2 / vp.scale;
-      g.strokeRect(L.hover.x * ts, L.hover.y * ts, ts, ts);
+      for (const p of cells) g.strokeRect(p.x * ts, p.y * ts, ts, ts);
     }
     // border
     g.strokeStyle = "rgba(255,255,255,0.3)";
@@ -478,14 +521,21 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const project = getProject();
     const sec = el("div.section", {}, el("h3", {}, "Terrains (autotile)"));
     const list = el("div.list");
-    for (const t of project.terrains) {
+    // Listed low→high priority (higher = drawn on top, owns boundaries).
+    project.terrains.forEach((t, i) => {
       list.append(el("div.list-item" + (t.id === L.activeTerrainId ? ".active" : ""),
         { onclick: () => { L.activeTerrainId = t.id; L.tool = "terrain"; renderInspector(); } },
+        el("span.meta", {}, `p${i}`),
         el("div.name", {}, t.name),
-        el("span.meta", {}, `${Object.keys(t.roles).length}/16`),
+        button("▲", (e: Event) => { e.stopPropagation(); moveTerrain(i, +1); }, "sm"),
+        button("▼", (e: Event) => { e.stopPropagation(); moveTerrain(i, -1); }, "sm"),
         button("✕", (e: Event) => { e.stopPropagation(); mutate(() => (project.terrains = project.terrains.filter((x) => x.id !== t.id))); if (L.activeTerrainId === t.id) L.activeTerrainId = null; refreshCanvasInspector(); }, "sm danger")));
-    }
-    sec.append(list, el("div.btn-row", { style: { marginTop: "6px" } }, button("+ Terrain", () => newTerrain())));
+    });
+    sec.append(list,
+      el("div.hint", {}, "Order = priority (p0 lowest). Higher terrains own their borders — paint a base everywhere (fill), then patches/roads on top. ▲ raises priority."),
+      el("div.btn-row", { style: { marginTop: "6px" } },
+        button("+ Terrain", () => newTerrain("edge16")),
+        button("+ Road", () => newTerrain("path"))));
 
     // Synthesized transitions: blend one fill terrain into another (for sheets
     // with no dedicated edge/corner art). Generates a 16-tile transition set.
@@ -513,9 +563,11 @@ export function mountStageEditor(root: HTMLElement): Editor {
       sec.append(el("div.hint", { style: { margin: "6px 0" } },
         `Auto-built terrain (inner corners): ${Object.keys(terrain.roles).length} configurations from the sheet. Paint with the terrain tool. Re-run auto-build to rebuild.`));
     }
-    if (terrain && terrain.kind === "edge16") {
+    if (terrain && (terrain.kind === "edge16" || terrain.kind === "path")) {
       sec.append(el("div.hint", { style: { margin: "6px 0" } },
-        "Click a palette tile, then click a slot below to assign it to that edge pattern. Then use the terrain tool to paint — borders & corners resolve automatically. Right-click a slot to clear."));
+        terrain.kind === "path"
+          ? "Assign road tiles to the connection slots (the glyph shows which sides connect: straights, corners, T-junctions, cross). Paint with the terrain tool on an overlay layer; junctions resolve automatically. Right-click a slot to clear."
+          : "Click a palette tile, then click a slot below to assign it to that edge pattern. Then use the terrain tool to paint — borders & corners resolve automatically. Right-click a slot to clear."));
       const grid = el("div.palette");
       for (const slot of EDGE16_SLOTS) {
         const cell = el("div.swatch", {
@@ -540,15 +592,28 @@ export function mountStageEditor(root: HTMLElement): Editor {
     return sec;
   }
 
-  function newTerrain(): void {
+  function moveTerrain(i: number, dir: number): void {
+    const terrains = getProject().terrains;
+    const j = i + dir;
+    if (j < 0 || j >= terrains.length) return;
+    mutate(() => { const [m] = terrains.splice(i, 1); terrains.splice(j, 0, m); });
+    const d = doc();
+    if (d) reflowTerrain(d); // priority changed → re-resolve borders
+    renderInspector();
+  }
+
+  function newTerrain(kind: "edge16" | "path"): void {
     const project = getProject();
     const tilesetId = (L.activeRef && L.activeRef.split("/")[0]) || project.tilesets[0]?.id;
     if (!tilesetId) { setStatus("Create a tileset first"); return; }
-    const t: Terrain = { id: uid("terr"), name: `terrain-${project.terrains.length + 1}`, tilesetId, kind: "edge16", roles: {} };
+    const label = kind === "path" ? "road" : "terrain";
+    const t: Terrain = { id: uid("terr"), name: `${label}-${project.terrains.length + 1}`, tilesetId, kind, roles: {} };
     mutate(() => project.terrains.push(t));
     L.activeTerrainId = t.id;
     L.tool = "terrain";
-    setStatus("Terrain created — assign tiles to the 16 edge slots");
+    setStatus(kind === "path"
+      ? "Road created — assign road tiles to the 16 connection slots (straights, corners, T, cross), then paint on an overlay layer"
+      : "Terrain created — assign tiles to the 16 edge slots");
     refreshCanvasInspector();
   }
 
@@ -690,6 +755,10 @@ export function mountStageEditor(root: HTMLElement): Editor {
       el("div.btn-row", {},
         ...(["paint", "erase", "fill", "rect", "object", "terrain", "collision"] as Tool[]).map((t) =>
           button(t, () => { L.tool = t; renderInspector(); }, L.tool === t ? "active" : ""))),
+      el("div.btn-row", { style: { marginTop: "6px", alignItems: "center" } },
+        el("span.field-label", {}, "Brush"),
+        ...[0, 1, 2, 3].map((r) => button(r === 0 ? "1×1" : `${r * 2 + 1}²`, () => { L.brushRadius = r; renderInspector(); }, L.brushRadius === r ? "active sm" : "sm")),
+        button(L.brushShape === "circle" ? "● round" : "■ square", () => { L.brushShape = L.brushShape === "circle" ? "square" : "circle"; renderInspector(); }, "sm")),
       el("div.btn-row", { style: { marginTop: "6px" } },
         checkbox("Grid", L.showGrid, (b) => { L.showGrid = b; vp.render(); }),
         checkbox("Show collision", L.showCollision, (b) => { L.showCollision = b; vp.render(); }),

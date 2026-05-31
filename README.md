@@ -173,7 +173,10 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
 1. **+ New stage** — set **Cols/Rows** and **Tile size**. (Build tilesets in
    Tile Studio first; they populate the palette.)
 2. **Paint terrain** — pick a 1-cell tile from the **palette** and `paint`,
-   `fill` (bucket), or `rect` it onto the ground layer.
+   `fill` (bucket), or `rect` it onto the ground layer. Set a **brush size**
+   (1×1 / 3² / 5² / 7²) and **shape** (square/round) to sweep broad areas at
+   once (HoMM3/WC3-style); the hover shows the brush footprint. Brush applies to
+   paint, erase, terrain, and collision tools.
 3. **Scatter for natural variation** — `🎲 Scatter`: **shift-click** several
    terrain tiles (grass variants, grass+dirt, …) to build a scatter set, enable
    Scatter, then paint/fill — each cell gets a random pick, so terrain doesn't
@@ -204,6 +207,15 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
      **Set base**, then **✨ Generate transition**. It blends fill over base with
      an ordered (Bayer) dither and builds a ready-to-paint 16-tile terrain — so
      grass softly blends into dirt with no hand-drawn transition tiles.
+   - **Priority (multi-terrain borders)** — the Terrains list is ordered by
+     **priority** (▲/▼; p0 lowest). A terrain only draws its edge toward
+     *lower*-priority neighbours, so higher terrains own their borders — exactly
+     like HoMM3. Paint a base everywhere (fill), then patches of higher terrains
+     on top and they border each other correctly.
+   - **Roads / paths** — **+ Road** makes a linear (`path`) terrain: assign road
+     tiles to the connection slots (straights, corners, T-junctions, cross — the
+     slot glyphs show the shape), then paint on an **overlay layer** and
+     junctions resolve automatically as you draw, like HoMM3's road tool.
 6. **Layers** — multiple tile layers (e.g. `ground`, `overlay`); reorder,
    rename, hide. Painting affects the active layer.
 6. **Collisions** — **Recompute from tiles + objects** seeds the grid from each

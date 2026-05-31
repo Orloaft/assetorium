@@ -15,17 +15,25 @@ export const NE = 16, SE = 32, SW = 64, NW = 128;
 /** A grid of terrainId|null. */
 export type TerrainGrid = (string | null)[][];
 
-function same(grid: TerrainGrid, x: number, y: number, id: string, cols: number, rows: number): boolean {
-  if (x < 0 || y < 0 || x >= cols || y >= rows) return true; // OOB = same (no border at map edge)
-  return grid[y][x] === id;
+/** Priority of a terrain id (higher = drawn on top / owns boundaries). Empty or
+ * unknown cells rank -Infinity. */
+export type RankFn = (id: string | null) => number;
+
+/** Whether the neighbour at (x,y) counts as "filled" for a cell of `myRank`:
+ * true when it's same-or-higher priority (so a terrain only draws an edge toward
+ * strictly-lower / empty neighbours — the HoMM3 priority rule). OOB = filled, so
+ * the map border doesn't get a transition edge. */
+function filled(grid: TerrainGrid, x: number, y: number, myRank: number, rank: RankFn, cols: number, rows: number): boolean {
+  if (x < 0 || y < 0 || x >= cols || y >= rows) return true;
+  return rank(grid[y][x]) >= myRank;
 }
 
-export function edgeMask(grid: TerrainGrid, x: number, y: number, id: string, cols: number, rows: number): number {
+export function edgeMask(grid: TerrainGrid, x: number, y: number, myRank: number, rank: RankFn, cols: number, rows: number): number {
   let m = 0;
-  if (same(grid, x, y - 1, id, cols, rows)) m |= N;
-  if (same(grid, x + 1, y, id, cols, rows)) m |= E;
-  if (same(grid, x, y + 1, id, cols, rows)) m |= S;
-  if (same(grid, x - 1, y, id, cols, rows)) m |= W;
+  if (filled(grid, x, y - 1, myRank, rank, cols, rows)) m |= N;
+  if (filled(grid, x + 1, y, myRank, rank, cols, rows)) m |= E;
+  if (filled(grid, x, y + 1, myRank, rank, cols, rows)) m |= S;
+  if (filled(grid, x - 1, y, myRank, rank, cols, rows)) m |= W;
   return m;
 }
 
@@ -46,29 +54,47 @@ export function blobKeyFromBits(
   return k;
 }
 
-export function blobKey(grid: TerrainGrid, x: number, y: number, id: string, cols: number, rows: number): number {
-  const sm = (dx: number, dy: number): boolean => same(grid, x + dx, y + dy, id, cols, rows);
-  return blobKeyFromBits(sm(0, -1), sm(1, 0), sm(0, 1), sm(-1, 0), sm(1, -1), sm(1, 1), sm(-1, 1), sm(-1, -1));
+export function blobKey(grid: TerrainGrid, x: number, y: number, myRank: number, rank: RankFn, cols: number, rows: number): number {
+  const f = (dx: number, dy: number): boolean => filled(grid, x + dx, y + dy, myRank, rank, cols, rows);
+  return blobKeyFromBits(f(0, -1), f(1, 0), f(0, 1), f(-1, 0), f(1, -1), f(1, 1), f(-1, 1), f(-1, -1));
 }
 
-/** Resolve the tile ref for cell (x,y) given the terrain membership grid.
- * Returns null if the cell isn't this terrain or no role is assigned. */
+/** Resolve the tile ref for cell (x,y) given the terrain membership grid and a
+ * priority `rank` function. Returns null if the cell isn't this terrain or no
+ * role is assigned. */
 export function resolveCell(
   terrain: Terrain,
   grid: TerrainGrid,
   x: number,
   y: number,
   cols: number,
-  rows: number
+  rows: number,
+  rank: RankFn
 ): string | null {
   if (grid[y]?.[x] !== terrain.id) return null;
+  if (terrain.kind === "path") {
+    // Linear road/river: connects only to the same path id; OOB = not connected
+    // (so it caps at the map edge). Same 4-bit mask as edge16.
+    const con = (dx: number, dy: number): boolean => {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) return false;
+      return grid[ny][nx] === terrain.id;
+    };
+    let m = 0;
+    if (con(0, -1)) m |= N;
+    if (con(1, 0)) m |= E;
+    if (con(0, 1)) m |= S;
+    if (con(-1, 0)) m |= W;
+    return terrain.roles[m] ?? terrain.roles[15] ?? Object.values(terrain.roles)[0] ?? null;
+  }
+  const myRank = rank(terrain.id);
   if (terrain.kind === "edge16") {
-    const mask = edgeMask(grid, x, y, terrain.id, cols, rows);
+    const mask = edgeMask(grid, x, y, myRank, rank, cols, rows);
     return terrain.roles[mask] ?? terrain.roles[15] ?? Object.values(terrain.roles)[0] ?? null;
   }
   // blob47: try the full key, then the same key with corners stripped (degrade
   // to the edge-only case), then the fully-surrounded centre, then anything.
-  const key = blobKey(grid, x, y, terrain.id, cols, rows);
+  const key = blobKey(grid, x, y, myRank, rank, cols, rows);
   const ortho = key & 15;
   return (
     terrain.roles[key] ??

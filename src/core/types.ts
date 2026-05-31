@@ -123,12 +123,14 @@ export interface TilesetDoc {
  * kind "edge16": 4-bit mask of orthogonal neighbours that share the terrain —
  *   bit 0 = N, 1 = E, 2 = S, 3 = W (16 tiles: edges + outer corners).
  * kind "blob47": 8-neighbour mask reduced to 47 cases (adds inner corners).
+ * kind "path": a linear road/river — same 4-bit mask, but connects only to the
+ *   same path id (no priority) and ends at the map edge; rendered as an overlay.
  */
 export interface Terrain {
   id: string;
   name: string;
   tilesetId: string;
-  kind: "edge16" | "blob47";
+  kind: "edge16" | "blob47" | "path";
   /** maskValue -> tile ref. */
   roles: Record<number, string>;
 }
