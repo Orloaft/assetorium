@@ -573,6 +573,10 @@ export function mountStageEditor(root: HTMLElement): Editor {
       el("div.btn-row", {}, button("🧩 Auto-build from sheet", () => autoBuildTerrain(), L.transFill && L.transBase ? "primary" : "")));
 
     const terrain = project.terrains.find((t) => t.id === L.activeTerrainId);
+    if (terrain) {
+      sec.append(el("div.btn-row", { style: { marginTop: "4px" } },
+        button(`▣ Fill active layer with "${terrain.name}"`, () => fillLayerWithTerrain(terrain))));
+    }
     if (terrain && terrain.kind === "blob47") {
       sec.append(el("div.hint", { style: { margin: "6px 0" } },
         `Auto-built terrain (inner corners): ${Object.keys(terrain.roles).length} configurations from the sheet. Paint with the terrain tool. Re-run auto-build to rebuild.`));
@@ -613,6 +617,23 @@ export function mountStageEditor(root: HTMLElement): Editor {
     mutate(() => { const [m] = terrains.splice(i, 1); terrains.splice(j, 0, m); });
     const d = doc();
     if (d) reflowTerrain(d); // priority changed → re-resolve borders
+    renderInspector();
+  }
+
+  /** Lay a base biome instantly: set the whole active layer's terrain
+   * membership to this terrain, then reflow autotiles. */
+  function fillLayerWithTerrain(terrain: Terrain): void {
+    const d = doc();
+    if (!d) return;
+    const layer = d.layers[L.activeLayer];
+    if (!layer) return;
+    ensureTerrainGrid(layer, d);
+    mutate(() => {
+      for (let y = 0; y < d.rows; y++) for (let x = 0; x < d.cols; x++) layer.terrain![y][x] = terrain.id;
+    });
+    reflowTerrain(d);
+    L.activeTerrainId = terrain.id;
+    setStatus(`Filled "${layer.name}" with ${terrain.name}`);
     renderInspector();
   }
 

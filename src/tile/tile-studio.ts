@@ -3,7 +3,7 @@ import { el, button, numberField, textField, checkbox, clear } from "../core/dom
 import { getProject, mutate, setStatus, slug } from "../core/store";
 import { sourcePicker } from "../core/sources";
 import { getKeyedCanvas, uid, cropCanvas, canvasToBlob, alphaBounds, importSourceFromUrl } from "../core/image";
-import { LIBRARY, libraryUrl } from "../core/library";
+import { LIBRARY, libraryUrl, libraryThumbUrl } from "../core/library";
 import { Viewport } from "../core/viewport";
 import { defaultChroma } from "../core/types";
 import type { TilesetDoc, TileDef } from "../core/types";
@@ -90,24 +90,22 @@ export function mountTileStudio(root: HTMLElement): Editor {
   function renderSidebar(): void {
     clear(sidebar);
 
-    // Built-in library: pick a biome/structure and it loads + slices, no import.
-    const libSel = el("select", {
-      onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; if (v) addFromLibrary(v); (e.target as HTMLSelectElement).selectedIndex = 0; }
-    });
-    libSel.append(el("option", { value: "" }, "📚 Add from library…"));
+    // Built-in library: a thumbnail grid; click a sheet to load + auto-slice it.
+    const libSec = el("div.section", {}, el("h3", {}, "Built-in library"));
     for (const cat of ["biome", "structure"] as const) {
-      const group = document.createElement("optgroup");
-      group.label = cat === "biome" ? "Biomes" : "Structures";
+      libSec.append(el("div.hint", { style: { margin: "6px 0 2px" } }, cat === "biome" ? "Biomes" : "Structures"));
+      const grid = el("div.lib-grid");
       for (const e of LIBRARY.filter((x) => x.category === cat)) {
-        const o = document.createElement("option");
-        o.value = e.file;
-        o.textContent = e.note ? `${e.name} — ${e.note}` : e.name;
-        group.append(o);
+        const added = getProject().tilesets.some((t) => t.name === e.name);
+        grid.append(el("div.lib-card" + (added ? ".added" : ""),
+          { title: e.note ? `${e.name} — ${e.note}` : e.name, onclick: () => addFromLibrary(e.file) },
+          el("img", { src: libraryThumbUrl(e.file), loading: "lazy", alt: e.name }),
+          el("span.lib-name", {}, e.name)));
       }
-      libSel.append(group);
+      libSec.append(grid);
     }
-    sidebar.append(el("div.section", {}, el("h3", {}, "Built-in library"), libSel,
-      el("div.hint", {}, "Loads a curated sheet and auto-slices it — ready to build terrains in the Stage Editor.")));
+    libSec.append(el("div.hint", { style: { marginTop: "6px" } }, "Click a sheet → loads + auto-slices. Then build terrains in the Stage Editor."));
+    sidebar.append(libSec);
 
     sidebar.append(sourcePicker(doc()?.sourceId ?? null, (id) => bindSource(id)));
     const list = el("div.list");

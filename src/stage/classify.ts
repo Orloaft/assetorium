@@ -54,16 +54,28 @@ export function isSeamlessFill(c: HTMLCanvasElement, tol = 62): boolean {
   return true;
 }
 
-/** A rough human name for a fill colour, for auto-naming terrains. */
+/** A rough human name for a fill colour, for auto-naming terrains. Uses HSL so
+ * olive/dark greens still read as grass, tans as sand, etc. */
 export function colorName(c: RGB): string {
-  const [r, g, b] = c;
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-  if (mx < 70) return "dark";
-  if (mx - mn < 36) return mx > 175 ? "snow" : "rock";
-  if (b > r && b > g) return "water";
-  if (g >= r && g >= b) return "grass";
-  if (r > g && g > b) return mx > 175 ? "sand" : "dirt";
-  return "ground";
+  const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  const l = (mx + mn) / 2;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let h = 0;
+  if (d) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = (h * 60 + 360) % 360;
+  }
+  if (l < 0.13) return "dark";
+  if (s < 0.16) return l > 0.72 ? "snow" : l < 0.3 ? "stone" : "rock"; // grayscale
+  if (h < 25 || h >= 335) return l > 0.5 ? "clay" : "dirt"; // red-brown
+  if (h < 50) return l > 0.5 ? "sand" : "dirt"; // orange/tan
+  if (h < 165) return "grass"; // yellow-green → green (incl. olive)
+  if (h < 200) return "shallows"; // teal
+  if (h < 275) return "water"; // blue
+  return "magic"; // purple/violet
 }
 
 /** Classify a tile against two fills. Returns the edge16 mask of sides that

@@ -144,6 +144,18 @@ body {
 }
 .swatch.active { border-color: var(--accent); }
 .swatch.scatter { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn) inset; }
+
+/* Library thumbnail grid */
+.lib-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.lib-card {
+  position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+  cursor: pointer; background: #0d0f13;
+}
+.lib-card:hover { border-color: var(--accent); }
+.lib-card.added { opacity: 0.55; }
+.lib-card.added::after { content: "✓ added"; position: absolute; top: 3px; right: 4px; font-size: 10px; color: var(--accent-2); background: rgba(0,0,0,0.5); border-radius: 3px; padding: 0 3px; }
+.lib-card img { display: block; width: 100%; height: 56px; object-fit: cover; image-rendering: pixelated; }
+.lib-name { display: block; padding: 3px 5px; font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .swatch canvas, .swatch img { width: 100%; height: 100%; image-rendering: pixelated; }
 .swatch .badge { position: absolute; bottom: -2px; right: -2px; font-size: 9px; background: var(--bg); border-radius: 3px; padding: 0 2px; color: var(--warn); }
 

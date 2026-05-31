@@ -39,3 +39,8 @@ export const LIBRARY: LibraryEntry[] = [
 export function libraryUrl(file: string): string {
   return `library/${file}`;
 }
+
+/** Small preview thumbnail (magenta neutralised), generated under thumbs/. */
+export function libraryThumbUrl(file: string): string {
+  return `library/thumbs/${file}`;
+}
