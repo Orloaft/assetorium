@@ -113,6 +113,27 @@ export interface TilesetDoc {
 }
 
 // ---------------------------------------------------------------------------
+// Terrains (autotiling)
+// ---------------------------------------------------------------------------
+
+/** An autotile terrain: paint membership, and each cell resolves to the right
+ * tile from its neighbours. `roles` maps a neighbour bitmask to a tile ref
+ * ("<tilesetId>/<tileId>").
+ *
+ * kind "edge16": 4-bit mask of orthogonal neighbours that share the terrain —
+ *   bit 0 = N, 1 = E, 2 = S, 3 = W (16 tiles: edges + outer corners).
+ * kind "blob47": 8-neighbour mask reduced to 47 cases (adds inner corners).
+ */
+export interface Terrain {
+  id: string;
+  name: string;
+  tilesetId: string;
+  kind: "edge16" | "blob47";
+  /** maskValue -> tile ref. */
+  roles: Record<number, string>;
+}
+
+// ---------------------------------------------------------------------------
 // Stage documents
 // ---------------------------------------------------------------------------
 
@@ -138,6 +159,10 @@ export interface StageLayer {
   visible: boolean;
   /** Grid of tile refs. Empty cell = null. A ref is "<tilesetId>/<tileId>". */
   data: (string | null)[][];
+  /** Optional autotile membership grid parallel to `data`: terrainId per cell
+   * (or null). When present, cells are resolved to tiles from neighbours, and
+   * the resolved tiles live in `data` (so export/render need no special path). */
+  terrain?: (string | null)[][];
 }
 
 export interface StageDoc {
@@ -165,11 +190,12 @@ export interface Project {
   sources: SourceImage[];
   sprites: SpriteDoc[];
   tilesets: TilesetDoc[];
+  terrains: Terrain[];
   stages: StageDoc[];
 }
 
 export function emptyProject(name = "Untitled"): Project {
-  return { version: PROJECT_VERSION, name, sources: [], sprites: [], tilesets: [], stages: [] };
+  return { version: PROJECT_VERSION, name, sources: [], sprites: [], tilesets: [], terrains: [], stages: [] };
 }
 
 // ---------------------------------------------------------------------------

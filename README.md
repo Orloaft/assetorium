@@ -183,7 +183,14 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
    at its true proportions across multiple cells (trees, rocks, buildings). They
    y-sort (nearer objects overlap farther ones) and snap to their base. Click an
    object to select/move it.
-5. **Layers** — multiple tile layers (e.g. `ground`, `overlay`); reorder,
+5. **Autotile terrains** — for tilesets with edge/corner transition tiles:
+   **+ Terrain**, then click a palette tile and click one of the 16 edge slots to
+   assign it (each slot's glyph shows which sides connect; right-click clears).
+   Pick the **terrain** tool and paint — every cell auto-picks the right
+   edge/corner tile from its neighbours, so grass↔dirt↔water borders resolve
+   themselves. Resolved tiles land in the normal tile layer, so export is
+   unchanged. (Current model: `edge16` — straight edges + outer corners.)
+6. **Layers** — multiple tile layers (e.g. `ground`, `overlay`); reorder,
    rename, hide. Painting affects the active layer.
 6. **Collisions** — **Recompute from tiles + objects** seeds the grid from each
    tile's `blocked` flag and every blocking object footprint, or hand-paint with

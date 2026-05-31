@@ -8,8 +8,10 @@ import { buildStageManifest } from "./stage-export";
 import { buildZip, textEntry, blobEntry } from "../core/zip";
 import { downloadBlob } from "../core/download";
 import { packTileset } from "../tile/tile-pack";
+import { resolveCell, EDGE16_SLOTS, maskGlyph } from "./autotile";
+import type { Terrain } from "../core/types";
 
-type Tool = "paint" | "erase" | "fill" | "rect" | "collision" | "object";
+type Tool = "paint" | "erase" | "fill" | "rect" | "collision" | "object" | "terrain";
 
 interface RefMeta {
   cellsW: number;
@@ -27,6 +29,7 @@ interface Local {
   /** Per-ref footprint (in stage cells) + collision flag. */
   refMeta: Map<string, RefMeta>;
   selectedObjectId: string | null;
+  activeTerrainId: string | null;
   /** Shift-clicked palette tiles to paint randomly among (terrain variation). */
   scatterRefs: string[];
   scatter: boolean;
@@ -50,6 +53,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
     tileImg: new Map(),
     refMeta: new Map(),
     selectedObjectId: null,
+    activeTerrainId: null,
     scatterRefs: [],
     scatter: false,
     hover: null,
@@ -115,6 +119,16 @@ export function mountStageEditor(root: HTMLElement): Editor {
       vp.render();
       return;
     }
+    if (L.tool === "terrain") {
+      if (!layer || !L.activeTerrainId) { if (isDown) setStatus("Pick or create a terrain first"); return; }
+      ensureTerrainGrid(layer, d);
+      if (layer.terrain![c.y][c.x] !== L.activeTerrainId) {
+        mutate(() => { layer.terrain![c.y][c.x] = L.activeTerrainId; });
+        resolveAround(d, layer, c.x, c.y);
+        vp.render();
+      }
+      return;
+    }
     if (L.tool === "fill") {
       if (isDown && layer) floodFill(layer, c.x, c.y);
       return;
@@ -166,6 +180,58 @@ export function mountStageEditor(root: HTMLElement): Editor {
         seen.add(key);
         layer.data[cy][cx] = pickRef();
         stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+      }
+    });
+    vp.render();
+  }
+
+  // ---- Autotiling --------------------------------------------------------
+  function ensureTerrainGrid(layer: StageLayer, d: StageDoc): void {
+    if (!layer.terrain || layer.terrain.length !== d.rows || layer.terrain[0]?.length !== d.cols) {
+      const next = makeGrid<string | null>(d.cols, d.rows, null);
+      if (layer.terrain) {
+        for (let y = 0; y < Math.min(d.rows, layer.terrain.length); y++)
+          for (let x = 0; x < Math.min(d.cols, layer.terrain[0].length); x++) next[y][x] = layer.terrain[y][x];
+      }
+      layer.terrain = next;
+    }
+  }
+
+  /** Re-resolve a cell and its 8 neighbours from terrain membership, writing the
+   * resolved autotile into the visible tile layer. */
+  function resolveAround(d: StageDoc, layer: StageLayer, cx: number, cy: number): void {
+    const terrains = getProject().terrains;
+    mutate(() => {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = cx + dx, y = cy + dy;
+          if (x < 0 || y < 0 || x >= d.cols || y >= d.rows) continue;
+          const tid = layer.terrain?.[y]?.[x];
+          if (!tid) continue;
+          const terrain = terrains.find((t) => t.id === tid);
+          if (!terrain) continue;
+          const ref = resolveCell(terrain, layer.terrain!, x, y, d.cols, d.rows);
+          if (ref) layer.data[y][x] = ref;
+        }
+      }
+    });
+  }
+
+  /** Re-resolve every terrain cell on a layer (after a role assignment changes). */
+  function reflowTerrain(d: StageDoc): void {
+    const terrains = getProject().terrains;
+    mutate(() => {
+      for (const layer of d.layers) {
+        if (!layer.terrain) continue;
+        for (let y = 0; y < d.rows; y++)
+          for (let x = 0; x < d.cols; x++) {
+            const tid = layer.terrain[y]?.[x];
+            if (!tid) continue;
+            const terrain = terrains.find((t) => t.id === tid);
+            if (!terrain) continue;
+            const ref = resolveCell(terrain, layer.terrain, x, y, d.cols, d.rows);
+            if (ref) layer.data[y][x] = ref;
+          }
       }
     });
     vp.render();
@@ -381,6 +447,12 @@ export function mountStageEditor(root: HTMLElement): Editor {
         for (let y = 0; y < Math.min(rows, d.rows); y++)
           for (let x = 0; x < Math.min(cols, d.cols); x++) next[y][x] = layer.data[y][x];
         layer.data = next;
+        if (layer.terrain) {
+          const nt = makeGrid<string | null>(cols, rows, null);
+          for (let y = 0; y < Math.min(rows, d.rows); y++)
+            for (let x = 0; x < Math.min(cols, d.cols); x++) nt[y][x] = layer.terrain[y][x];
+          layer.terrain = nt;
+        }
       }
       const col = makeGrid(cols, rows, false);
       for (let y = 0; y < Math.min(rows, d.rows); y++)
@@ -390,6 +462,68 @@ export function mountStageEditor(root: HTMLElement): Editor {
       d.rows = rows;
     });
     vp.fit(d.cols * d.tileSize, d.rows * d.tileSize);
+  }
+
+  // ---- Terrains (autotiling) UI -----------------------------------------
+  function renderTerrainsSection(d: StageDoc): HTMLElement {
+    const project = getProject();
+    const sec = el("div.section", {}, el("h3", {}, "Terrains (autotile)"));
+    const list = el("div.list");
+    for (const t of project.terrains) {
+      list.append(el("div.list-item" + (t.id === L.activeTerrainId ? ".active" : ""),
+        { onclick: () => { L.activeTerrainId = t.id; L.tool = "terrain"; renderInspector(); } },
+        el("div.name", {}, t.name),
+        el("span.meta", {}, `${Object.keys(t.roles).length}/16`),
+        button("✕", (e: Event) => { e.stopPropagation(); mutate(() => (project.terrains = project.terrains.filter((x) => x.id !== t.id))); if (L.activeTerrainId === t.id) L.activeTerrainId = null; refreshCanvasInspector(); }, "sm danger")));
+    }
+    sec.append(list, el("div.btn-row", { style: { marginTop: "6px" } }, button("+ Terrain", () => newTerrain())));
+
+    const terrain = project.terrains.find((t) => t.id === L.activeTerrainId);
+    if (terrain) {
+      sec.append(el("div.hint", { style: { margin: "6px 0" } },
+        "Click a palette tile, then click a slot below to assign it to that edge pattern. Then use the terrain tool to paint — borders & corners resolve automatically. Right-click a slot to clear."));
+      const grid = el("div.palette");
+      for (const slot of EDGE16_SLOTS) {
+        const cell = el("div.swatch", {
+          title: slot.label,
+          style: { position: "relative" },
+          onclick: () => assignRole(terrain, slot.mask),
+          oncontextmenu: (e: Event) => { e.preventDefault(); mutate(() => { delete terrain.roles[slot.mask]; }); reflowTerrain(d); renderInspector(); }
+        });
+        cell.append(maskGlyph(slot.mask));
+        const ref = terrain.roles[slot.mask];
+        const img = ref && L.tileImg.get(ref);
+        if (img) {
+          const c = newCanvas(img.width, img.height);
+          ctx2d(c).drawImage(img, 0, 0);
+          Object.assign(c.style, { position: "absolute", inset: "0", width: "100%", height: "100%", objectFit: "contain", opacity: "0.92" });
+          cell.append(c);
+        }
+        grid.append(cell);
+      }
+      sec.append(grid);
+    }
+    return sec;
+  }
+
+  function newTerrain(): void {
+    const project = getProject();
+    const tilesetId = (L.activeRef && L.activeRef.split("/")[0]) || project.tilesets[0]?.id;
+    if (!tilesetId) { setStatus("Create a tileset first"); return; }
+    const t: Terrain = { id: uid("terr"), name: `terrain-${project.terrains.length + 1}`, tilesetId, kind: "edge16", roles: {} };
+    mutate(() => project.terrains.push(t));
+    L.activeTerrainId = t.id;
+    L.tool = "terrain";
+    setStatus("Terrain created — assign tiles to the 16 edge slots");
+    refreshCanvasInspector();
+  }
+
+  function assignRole(terrain: Terrain, mask: number): void {
+    if (!L.activeRef) { setStatus("Pick a palette tile first, then click a slot"); return; }
+    mutate(() => { terrain.roles[mask] = L.activeRef!; });
+    const d = doc();
+    if (d) reflowTerrain(d);
+    renderInspector();
   }
 
   function recomputeCollision(d: StageDoc): void {
@@ -436,13 +570,13 @@ export function mountStageEditor(root: HTMLElement): Editor {
     inspector.append(el("div.section", {},
       el("h3", {}, "Tools"),
       el("div.btn-row", {},
-        ...(["paint", "erase", "fill", "rect", "object", "collision"] as Tool[]).map((t) =>
+        ...(["paint", "erase", "fill", "rect", "object", "terrain", "collision"] as Tool[]).map((t) =>
           button(t, () => { L.tool = t; renderInspector(); }, L.tool === t ? "active" : ""))),
       el("div.btn-row", { style: { marginTop: "6px" } },
         checkbox("Grid", L.showGrid, (b) => { L.showGrid = b; vp.render(); }),
         checkbox("Show collision", L.showCollision, (b) => { L.showCollision = b; vp.render(); }),
         checkbox(`🎲 Scatter (${L.scatterRefs.length})`, L.scatter, (b) => { L.scatter = b; renderInspector(); })),
-      el("div.hint", {}, "Paint/fill/rect place 1-cell terrain tiles. Object stamps a multi-cell decoration (trees, rocks) at true proportions — picking a ◳ palette tile switches here automatically. Scatter: shift-click several terrain tiles, then paint/fill randomly among them for natural variation. Collision = drag to toggle blocked cells.")));
+      el("div.hint", {}, "Paint/fill/rect place 1-cell tiles. Object stamps a multi-cell decoration at true proportions (◳ tiles switch here automatically). Terrain auto-picks edge/corner tiles from neighbours (set one up in Terrains below). Scatter: shift-click several tiles, then paint/fill randomly among them. Collision = drag to toggle blocked cells.")));
 
     // Layers
     const layerList = el("div.list");
@@ -460,6 +594,9 @@ export function mountStageEditor(root: HTMLElement): Editor {
       el("div.btn-row", { style: { marginTop: "6px" } },
         button("+ Layer", () => { mutate(() => d.layers.push({ id: uid("ly"), name: `layer-${d.layers.length + 1}`, visible: true, data: makeGrid(d.cols, d.rows, null) })); refreshCanvasInspector(); }),
         button("Rename", () => { const layer = d.layers[L.activeLayer]; const n = prompt("Layer name", layer.name); if (n) { mutate(() => (layer.name = n)); renderInspector(); } }, "sm"))));
+
+    // Terrains (autotiling)
+    inspector.append(renderTerrainsSection(d));
 
     // Collision
     inspector.append(el("div.section", {},

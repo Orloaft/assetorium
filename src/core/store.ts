@@ -30,7 +30,10 @@ function restore(): Project | null {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return null;
     const p = JSON.parse(raw) as Project;
-    if (p && p.version === PROJECT_VERSION) return p;
+    if (p && p.version === PROJECT_VERSION) {
+      p.terrains ??= []; // backfill fields added after this project was saved
+      return p;
+    }
   } catch {
     /* ignore corrupt autosave */
   }
@@ -131,6 +134,7 @@ export async function loadProjectFile(): Promise<void> {
     sources,
     sprites: raw.sprites ?? [],
     tilesets: raw.tilesets ?? [],
+    terrains: raw.terrains ?? [],
     stages: raw.stages ?? []
   });
   setStatus(`Loaded "${raw.name}"`);
