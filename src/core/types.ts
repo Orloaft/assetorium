@@ -125,12 +125,14 @@ export interface TilesetDoc {
  * kind "blob47": 8-neighbour mask reduced to 47 cases (adds inner corners).
  * kind "path": a linear road/river — same 4-bit mask, but connects only to the
  *   same path id (no priority) and ends at the map edge; rendered as an overlay.
+ * kind "wang": corner-based Wang (the primary terrain model) — 16 tiles indexed
+ *   by which CORNERS are this terrain (TL=1,TR=2,BR=4,BL=8); dual-grid rendered.
  */
 export interface Terrain {
   id: string;
   name: string;
   tilesetId: string;
-  kind: "edge16" | "blob47" | "path";
+  kind: "edge16" | "blob47" | "path" | "wang";
   /** maskValue -> tile ref. */
   roles: Record<number, string>;
 }

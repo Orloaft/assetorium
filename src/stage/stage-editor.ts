@@ -9,7 +9,8 @@ import { buildZip, textEntry, blobEntry } from "../core/zip";
 import { downloadBlob } from "../core/download";
 import { packTileset } from "../tile/tile-pack";
 import { resolveCell, EDGE16_SLOTS, maskGlyph } from "./autotile";
-import { generateTransitionSheet } from "./transition-gen";
+import { drawWangLayer } from "./wang";
+import { generateWang16 } from "./wang-gen";
 import { classifyTileBlob, tileCenter, isSeamlessFill, colorDist, colorName } from "./classify";
 import type { RGB } from "./classify";
 import { importSourceDataUrl } from "../core/image";
@@ -157,7 +158,13 @@ export function mountStageEditor(root: HTMLElement): Editor {
       const cells = brushCells(d, c.x, c.y);
       let changed = false;
       mutateSilent(() => { for (const p of cells) if (layer.terrain![p.y][p.x] !== L.activeTerrainId) { layer.terrain![p.y][p.x] = L.activeTerrainId; changed = true; } });
-      if (changed) { resolveSet(d, layer, cells); vp.render(); }
+      if (changed) {
+        // Wang terrains render straight from membership (dual-grid) — no data
+        // writes. Legacy kinds resolve into the tile layer.
+        const at = getProject().terrains.find((t) => t.id === L.activeTerrainId);
+        if (at && at.kind !== "wang") resolveSet(d, layer, cells);
+        vp.render();
+      }
       return;
     }
     if (L.tool === "fill") {
@@ -340,8 +347,11 @@ export function mountStageEditor(root: HTMLElement): Editor {
     g.fillStyle = "#0e1116";
     g.fillRect(0, 0, W, H);
 
+    const terrainsById = new Map(getProject().terrains.map((t) => [t.id, t]));
+    const rank = terrainRank();
     for (const layer of d.layers) {
       if (!layer.visible) continue;
+      // 1) manually-placed / legacy resolved tiles
       for (let y = 0; y < d.rows; y++) {
         for (let x = 0; x < d.cols; x++) {
           const ref = layer.data[y][x];
@@ -350,6 +360,10 @@ export function mountStageEditor(root: HTMLElement): Editor {
           if (img) g.drawImage(img, 0, 0, img.width, img.height, x * ts, y * ts, ts, ts);
           else { g.fillStyle = "#444"; g.fillRect(x * ts, y * ts, ts, ts); }
         }
+      }
+      // 2) corner-Wang terrains, dual-grid rendered from membership
+      if (layer.terrain) {
+        drawWangLayer(g, layer.terrain, terrainsById, rank, (r) => L.tileImg.get(r), ts, d.cols, d.rows);
       }
     }
 
@@ -549,7 +563,10 @@ export function mountStageEditor(root: HTMLElement): Editor {
         button("➕ Make terrain from selected tile", () => makeTerrainFromSelected(), L.activeRef ? "primary" : "")),
       el("div.btn-row", { style: { marginTop: "6px" } },
         button("✨ Auto-create (guess all)", () => autoCreateTerrains()),
-        button("+ Road", () => newTerrain("path"))));
+        button("+ Road", () => newTerrain("path"))),
+      el("div.btn-row", { style: { marginTop: "6px" } },
+        button("➕ Wang terrain from 16-tile set", () => importWangFromTileset())),
+      el("div.hint", {}, "Wang terrains blend seamlessly via corner tiles (no repeating borders). Load a hand-authored 16-tile Wang sheet (slice it 4×4), then ‘Wang terrain from 16-tile set’ — see docs/autotile-template-spec.md."));
 
     // Synthesized transitions: blend one fill terrain into another (for sheets
     // with no dedicated edge/corner art). Generates a 16-tile transition set.
@@ -681,7 +698,8 @@ export function mountStageEditor(root: HTMLElement): Editor {
     return cropCanvas(img, x, y, img.width - 2 * x, img.height - 2 * y);
   }
 
-  /** A plain seamless-fill terrain from a single (cropped) fill image. */
+  /** A plain seamless-fill WANG terrain from a single (cropped) fill image —
+   * all 16 corner roles point at the one fill tile, so it paints solid. The base. */
   async function buildFillTerrain(
     fillImg: HTMLCanvasElement, size: number, name: string
   ): Promise<{ source: import("../core/types").SourceImage; tileset: TilesetDoc; terrain: Terrain }> {
@@ -696,21 +714,22 @@ export function mountStageEditor(root: HTMLElement): Editor {
       tileSize: size, grid: { offsetX: 0, offsetY: 0, cols: 1, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 }, tiles: [tile]
     };
     const ref = `${tsId}/${tile.id}`;
-    return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "edge16", roles: { 0: ref, 15: ref } } };
+    const roles: Record<number, string> = {};
+    for (let i = 0; i < 16; i++) roles[i] = ref;
+    return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "wang", roles } };
   }
 
-  /** Generate a synthesized edge16 terrain: `fillImg` dither-blended over
-   * `baseImg`, packed as a 16-tile sheet → source + tileset + terrain. Returns
-   * the docs (caller mutates). */
+  /** Build a corner-WANG terrain: `fillImg` blended over `baseImg` as a 16-tile
+   * corner set (clean rounded transitions, no dither), dual-grid rendered. */
   async function buildSynthTerrain(
-    fillImg: HTMLCanvasElement, baseImg: HTMLCanvasElement, size: number, name: string, band: number
+    fillImg: HTMLCanvasElement, baseImg: HTMLCanvasElement, size: number, name: string, _band: number
   ): Promise<{ source: import("../core/types").SourceImage; tileset: TilesetDoc; terrain: Terrain }> {
-    const sheet = generateTransitionSheet(fillImg, baseImg, size, band);
+    const sheet = generateWang16(fillImg, baseImg, size);
     const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
     const source = await importSourceDataUrl(uid("src"), name, dataUrl);
     const tsId = uid("ts");
     const tiles: TileDef[] = Array.from({ length: 16 }, (_, i) => ({
-      id: uid("t"), char: "", name: `m${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: []
+      id: uid("t"), char: "", name: `w${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: []
     }));
     const tileset: TilesetDoc = {
       id: tsId, name, sourceId: source.id,
@@ -721,7 +740,25 @@ export function mountStageEditor(root: HTMLElement): Editor {
     };
     const roles: Record<number, string> = {};
     tiles.forEach((t, mask) => (roles[mask] = `${tsId}/${t.id}`));
-    return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "edge16", roles } };
+    return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "wang", roles } };
+  }
+
+  /** Import a hand-authored 16-tile Wang set (the active tileset, sliced 4×4 or
+   * 16×1 in index order) directly as a corner-Wang terrain — crisp real art. */
+  function importWangFromTileset(): void {
+    const d = doc();
+    const tsId = (L.activeRef && L.activeRef.split("/")[0]) || getProject().tilesets[0]?.id;
+    const ts = getProject().tilesets.find((t) => t.id === tsId);
+    if (!ts || ts.tiles.length < 16) { setStatus("Need a sliced 16-tile Wang set (slice the sheet 4×4 first)"); return; }
+    const roles: Record<number, string> = {};
+    for (let i = 0; i < 16; i++) roles[i] = `${tsId}/${ts.tiles[i].id}`;
+    const terrain: Terrain = { id: uid("terr"), name: ts.name, tilesetId: tsId, kind: "wang", roles };
+    mutate((p) => p.terrains.push(terrain));
+    if (d) { d.tileSize = ts.tileSize; vp.fit(d.cols * d.tileSize, d.rows * d.tileSize); }
+    L.activeTerrainId = terrain.id;
+    L.tool = "terrain";
+    setStatus(`Wang terrain "${ts.name}" from 16-tile set — pick it and paint`);
+    refreshCanvasInspector();
   }
 
   /** Build an edge16 terrain from a sheet that already has edge/corner tiles, by
@@ -1113,6 +1150,8 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const g = ctx2d(c);
     g.fillStyle = "#0e1116";
     g.fillRect(0, 0, c.width, c.height);
+    const terrainsById = new Map(getProject().terrains.map((t) => [t.id, t]));
+    const rank = terrainRank();
     for (const layer of d.layers) {
       if (!layer.visible) continue;
       for (let y = 0; y < d.rows; y++)
@@ -1121,6 +1160,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
           const img = ref && L.tileImg.get(ref);
           if (img) g.drawImage(img, 0, 0, img.width, img.height, x * ts, y * ts, ts, ts);
         }
+      if (layer.terrain) drawWangLayer(g, layer.terrain, terrainsById, rank, (r) => L.tileImg.get(r), ts, d.cols, d.rows);
     }
     // Objects on top, y-sorted (matches the editor's depth order).
     for (const o of [...d.objects].sort((a, b) => a.y + a.h - (b.y + b.h))) {
