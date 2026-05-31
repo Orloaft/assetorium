@@ -172,21 +172,36 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
 ### Workflow
 1. **+ New stage** — set **Cols/Rows** and **Tile size**. (Build tilesets in
    Tile Studio first; they populate the palette.)
-2. **Pick a tile** from the **palette** (left sidebar, grouped by tileset) and
-   **paint/drag** it onto the grid.
-3. **Tools** (inspector): `paint`, `erase`, `fill` (bucket), `rect` (drag a
-   filled box), `collision` (drag to toggle blocked cells). Toggle **Grid** and
-   **Show collision** overlays.
-4. **Layers** — multiple tile layers (e.g. `ground`, `overlay`); reorder,
-   rename, hide, add. Painting affects the active layer.
-5. **Collisions** — **Recompute from tile flags** seeds the collision grid from
-   each tile's `blocked` flag, or hand-paint with the collision tool. The
-   exported grid is authoritative.
-6. **Objects** — place props/structures with a `key` and a **blocking
-   footprint** (tile coords + size).
-7. **Export stage** → a **self-contained** zip: `name.stage.json`, every
-   referenced tileset's PNG+JSON, an **ascii** map + legend, and a composited
-   `name-preview.png`.
+2. **Paint terrain** — pick a 1-cell tile from the **palette** and `paint`,
+   `fill` (bucket), or `rect` it onto the ground layer.
+3. **Scatter for natural variation** — `🎲 Scatter`: **shift-click** several
+   terrain tiles (grass variants, grass+dirt, …) to build a scatter set, enable
+   Scatter, then paint/fill — each cell gets a random pick, so terrain doesn't
+   look obviously tiled.
+4. **Place decorations** — palette tiles bigger than one cell show a `◳` badge;
+   clicking one switches to the **object** tool. Click the map to **stamp** it
+   at its true proportions across multiple cells (trees, rocks, buildings). They
+   y-sort (nearer objects overlap farther ones) and snap to their base. Click an
+   object to select/move it.
+5. **Layers** — multiple tile layers (e.g. `ground`, `overlay`); reorder,
+   rename, hide. Painting affects the active layer.
+6. **Collisions** — **Recompute from tiles + objects** seeds the grid from each
+   tile's `blocked` flag and every blocking object footprint, or hand-paint with
+   the `collision` tool. The exported grid is authoritative.
+7. **Export stage** → a **self-contained** zip: `name.stage.json` (layers,
+   collision, objects with their tile refs), every referenced tileset's PNG+JSON,
+   an **ascii** map + legend, and a composited `name-preview.png`.
+
+### Getting clean tiles from a source sheet
+- **Set the output tile size to your terrain tile** (Tile Studio → *Output tile
+  size*, or click a terrain tile and **Fit tile size → N**). Then terrain = 1
+  cell and bigger art (trees) becomes multi-cell objects automatically.
+- **Raise the slice Inset** until terrain edges are clean — it trims the soft
+  anti-aliased fringe off terrain tiles so they tile seamlessly. Inset is applied
+  to terrain-sized tiles only; objects keep their full silhouette.
+- **Mixed sheets** (packed terrain + scattered props): grid-slice the terrain
+  region, tick **Append**, then **Auto-detect tiles** for the props — both land
+  in one palette.
 
 ---
 
