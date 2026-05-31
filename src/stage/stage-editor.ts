@@ -673,6 +673,32 @@ export function mountStageEditor(root: HTMLElement): Editor {
     vp.render();
   }
 
+  /** Crop the baked border/vignette off a tile so its centre tiles seamlessly.
+   * Many "biome" ground tiles are drawn as standalone squares with dark edges;
+   * tiling them raw produces a grid of bordered squares. */
+  function centerCrop(img: HTMLCanvasElement, frac = 0.18): HTMLCanvasElement {
+    const x = Math.floor(img.width * frac), y = Math.floor(img.height * frac);
+    return cropCanvas(img, x, y, img.width - 2 * x, img.height - 2 * y);
+  }
+
+  /** A plain seamless-fill terrain from a single (cropped) fill image. */
+  async function buildFillTerrain(
+    fillImg: HTMLCanvasElement, size: number, name: string
+  ): Promise<{ source: import("../core/types").SourceImage; tileset: TilesetDoc; terrain: Terrain }> {
+    const c = newCanvas(size, size);
+    ctx2d(c).drawImage(fillImg, 0, 0, fillImg.width, fillImg.height, 0, 0, size, size);
+    const dataUrl = await blobToDataUrl(await canvasToBlob(c));
+    const source = await importSourceDataUrl(uid("src"), name, dataUrl);
+    const tsId = uid("ts");
+    const tile: TileDef = { id: uid("t"), char: "", name: "fill", x: 0, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: [] };
+    const tileset: TilesetDoc = {
+      id: tsId, name, sourceId: source.id, chroma: { enabled: false, tolerance: 0, fringe: 0 },
+      tileSize: size, grid: { offsetX: 0, offsetY: 0, cols: 1, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 }, tiles: [tile]
+    };
+    const ref = `${tsId}/${tile.id}`;
+    return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "edge16", roles: { 0: ref, 15: ref } } };
+  }
+
   /** Generate a synthesized edge16 terrain: `fillImg` dither-blended over
    * `baseImg`, packed as a 16-tile sheet → source + tileset + terrain. Returns
    * the docs (caller mutates). */
@@ -802,21 +828,26 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const baseSurf = surfaces.find((s) => !isWet(s.name)) ?? surfaces[0];
     const baseRep = rep(baseSurf);
     if (!baseRep) { setStatus("Couldn't read a base fill tile"); return; }
+    // Crop the baked border off fills so they tile seamlessly.
+    const baseCrop = centerCrop(baseRep.img);
 
-    // Base terrain = a plain fill (it's the floor; no borders needed).
     const newSources: Array<import("../core/types").SourceImage> = [];
     const newTilesets: TilesetDoc[] = [];
-    const newTerrains: Terrain[] = [{ id: uid("terr"), name: baseSurf.name, tilesetId: tsId, kind: "edge16", roles: { 0: baseRep.ref, 15: baseRep.ref } }];
+    const newTerrains: Terrain[] = [];
 
-    // Every other surface = synthesized soft borders over the base, so painting
-    // it always blends (independent of the sheet's edge art). Non-water first,
-    // water last so water sits highest priority.
+    // Base terrain = a plain seamless fill (the floor) from the cropped centre.
+    const baseT = await buildFillTerrain(baseCrop, unit, baseSurf.name);
+    newSources.push(baseT.source); newTilesets.push(baseT.tileset); newTerrains.push(baseT.terrain);
+
+    // Every other surface = its cropped fill dither-blended over the base, so
+    // painting it always blends (independent of the sheet's edge art). Non-water
+    // first, water last so water sits highest priority.
     const band = Math.max(2, Math.round(unit * 0.18));
     const others = surfaces.filter((s) => s !== baseSurf).sort((a, b) => (isWet(a.name) ? 1 : 0) - (isWet(b.name) ? 1 : 0) || b.members.length - a.members.length);
     for (const s of others) {
       const r = rep(s);
       if (!r) continue;
-      const built = await buildSynthTerrain(r.img, baseRep.img, unit, s.name, band);
+      const built = await buildSynthTerrain(centerCrop(r.img), baseCrop, unit, s.name, band);
       newSources.push(built.source);
       newTilesets.push(built.tileset);
       newTerrains.push(built.terrain);
