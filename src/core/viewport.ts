@@ -22,6 +22,8 @@ export interface ViewportCallbacks {
   onPointerMove?: (p: VPPointer) => void;
   onPointerUp?: (p: VPPointer) => void;
   onHover?: (p: VPPointer | null) => void;
+  /** Right-click in world space (the default context menu is suppressed). */
+  onContextMenu?: (p: VPPointer) => void;
 }
 
 export class Viewport {
@@ -51,7 +53,10 @@ export class Viewport {
     this.canvas.addEventListener("pointermove", this.onMove);
     window.addEventListener("pointerup", this.onUp);
     this.canvas.addEventListener("pointerleave", () => this.cb.onHover?.(null));
-    this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    this.canvas.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.cb.onContextMenu?.(this.toPointer(e as unknown as PointerEvent));
+    });
     window.addEventListener("keydown", this.onKey);
     window.addEventListener("keyup", this.onKey);
 

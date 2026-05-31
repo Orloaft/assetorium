@@ -85,9 +85,27 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
         renderInspector();
         vp.render();
       }
+    },
+    onContextMenu: (p) => {
+      const d = doc();
+      if (!d) return;
+      const hit = hitFrame(d, p.worldX, p.worldY);
+      if (hit) deleteFrames([hit.id]);
     }
   });
   vp.mount(canvasWrap);
+
+  // Delete / Backspace removes the currently selected frames (unless typing).
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Delete" && e.key !== "Backspace") return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    if (L.selection.length) {
+      e.preventDefault();
+      deleteFrames([...L.selection]);
+    }
+  };
+  window.addEventListener("keydown", onKey);
 
   function hitFrame(d: SpriteDoc, wx: number, wy: number): FrameBox | null {
     for (let i = d.frames.length - 1; i >= 0; i--) {
@@ -103,6 +121,21 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
     else L.selection.push(id);
     renderInspector();
     vp.render();
+  }
+
+  /** Remove frames from the document and from any animation rows referencing
+   * them. Used by right-click, the Delete key, and the toolbar button. */
+  function deleteFrames(ids: string[]): void {
+    const d = doc();
+    if (!d || !ids.length) return;
+    const set = new Set(ids);
+    mutate(() => {
+      d.frames = d.frames.filter((f) => !set.has(f.id));
+      for (const clip of d.clips) for (const row of clip.rows) row.frames = row.frames.filter((fid) => !set.has(fid));
+    });
+    L.selection = L.selection.filter((id) => !set.has(id));
+    setStatus(`Deleted ${set.size} frame${set.size === 1 ? "" : "s"} · ${d.frames.length} left`);
+    refreshCanvasInspector();
   }
 
   function drawScene(g: CanvasRenderingContext2D): void {
@@ -240,7 +273,7 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
           { value: "select", label: "Select frames" },
           { value: "draw", label: "Draw box" }
         ], (v) => { L.tool = v; renderInspector(); }),
-        el("div.hint", {}, "Wheel = zoom · middle-drag or Space-drag = pan.")
+        el("div.hint", {}, "Wheel = zoom · middle/Space-drag = pan · right-click a frame to delete it.")
       )
     );
 
@@ -292,8 +325,9 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
           numberField("Pad", L.detect.pad, (v) => (L.detect.pad = v), { min: 0, width: 44 })),
         el("div.btn-row", { style: { marginTop: "6px" } },
           button("Auto-detect frames", () => autoDetect(), "primary"),
+          button(`🗑 Delete selected (${L.selection.length})`, () => deleteFrames([...L.selection]), L.selection.length ? "danger" : ""),
           button("Clear frames", () => { mutate(() => { d.frames = []; }); L.selection = []; refreshCanvasInspector(); })),
-        el("div.hint", {}, `${d.frames.length} frames · ${L.selection.length} selected`))
+        el("div.hint", {}, `${d.frames.length} frames · ${L.selection.length} selected. In Select mode: click frames to select, then Delete key or 🗑 to remove. Right-click a frame to delete it directly.`))
     );
 
     // Animations
@@ -319,6 +353,7 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
         button("⚡ Quick-rig 4-dir walk", () => quickRig(d), "primary")),
       el("div.btn-row", { style: { margin: "6px 0" } },
         button(`Assign selection (${L.selection.length}) → row`, () => assignSelection(d)),
+        button("🗑 Delete", () => deleteFrames([...L.selection]), "sm danger"),
         button("Clear sel", () => { L.selection = []; refreshCanvasInspector(); }, "sm"))
     );
     for (const clip of d.clips) {
@@ -485,6 +520,7 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
       refreshAll();
     },
     unmount: () => {
+      window.removeEventListener("keydown", onKey);
       animator.destroy();
       vp.destroy();
       root.replaceChildren();
