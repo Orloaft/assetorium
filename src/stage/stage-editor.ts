@@ -9,7 +9,9 @@ import { buildZip, textEntry, blobEntry } from "../core/zip";
 import { downloadBlob } from "../core/download";
 import { packTileset } from "../tile/tile-pack";
 import { resolveCell, EDGE16_SLOTS, maskGlyph } from "./autotile";
-import type { Terrain } from "../core/types";
+import { generateTransitionSheet } from "./transition-gen";
+import { importSourceDataUrl } from "../core/image";
+import type { Terrain, TilesetDoc, TileDef } from "../core/types";
 
 type Tool = "paint" | "erase" | "fill" | "rect" | "collision" | "object" | "terrain";
 
@@ -30,6 +32,9 @@ interface Local {
   refMeta: Map<string, RefMeta>;
   selectedObjectId: string | null;
   activeTerrainId: string | null;
+  transFill: string | null;
+  transBase: string | null;
+  transBand: number;
   /** Shift-clicked palette tiles to paint randomly among (terrain variation). */
   scatterRefs: string[];
   scatter: boolean;
@@ -54,6 +59,9 @@ export function mountStageEditor(root: HTMLElement): Editor {
     refMeta: new Map(),
     selectedObjectId: null,
     activeTerrainId: null,
+    transFill: null,
+    transBase: null,
+    transBand: 10,
     scatterRefs: [],
     scatter: false,
     hover: null,
@@ -478,6 +486,25 @@ export function mountStageEditor(root: HTMLElement): Editor {
     }
     sec.append(list, el("div.btn-row", { style: { marginTop: "6px" } }, button("+ Terrain", () => newTerrain())));
 
+    // Synthesized transitions: blend one fill terrain into another (for sheets
+    // with no dedicated edge/corner art). Generates a 16-tile transition set.
+    const fillImg = L.transFill ? L.tileImg.get(L.transFill) : null;
+    const baseImg = L.transBase ? L.tileImg.get(L.transBase) : null;
+    const thumb = (img: HTMLCanvasElement | null | undefined): HTMLElement => {
+      const box = el("div.swatch", { style: { width: "28px", height: "28px" } });
+      if (img) { const c = newCanvas(img.width, img.height); ctx2d(c).drawImage(img, 0, 0); c.style.objectFit = "contain"; box.append(c); }
+      return box;
+    };
+    sec.append(
+      el("div.divider"),
+      el("div.hint", {}, "Synthesized transition — blend a fill terrain into a base (for sheets without edge/corner art): select a palette tile, Set fill; select another, Set base; Generate."),
+      el("div.btn-row", { style: { alignItems: "center" } },
+        button("Set fill", () => { L.transFill = L.activeRef; renderInspector(); }, "sm"), thumb(fillImg),
+        button("Set base", () => { L.transBase = L.activeRef; renderInspector(); }, "sm"), thumb(baseImg)),
+      el("div.btn-row", { style: { alignItems: "center" } },
+        numberField("Blend px", L.transBand, (v) => (L.transBand = Math.max(0, v)), { min: 0, max: 64, width: 56 }),
+        button("✨ Generate transition", () => createSynthesizedTerrain(), L.transFill && L.transBase ? "primary" : "")));
+
     const terrain = project.terrains.find((t) => t.id === L.activeTerrainId);
     if (terrain) {
       sec.append(el("div.hint", { style: { margin: "6px 0" } },
@@ -516,6 +543,54 @@ export function mountStageEditor(root: HTMLElement): Editor {
     L.tool = "terrain";
     setStatus("Terrain created — assign tiles to the 16 edge slots");
     refreshCanvasInspector();
+  }
+
+  async function createSynthesizedTerrain(): Promise<void> {
+    const d = doc();
+    if (!d) return;
+    if (!L.transFill || !L.transBase) { setStatus("Set both a fill and a base tile"); return; }
+    const fillImg = L.tileImg.get(L.transFill);
+    const baseImg = L.tileImg.get(L.transBase);
+    if (!fillImg || !baseImg) { setStatus("Tile art not loaded"); return; }
+    setStatus("Generating transition tiles…");
+    const size = d.tileSize || 48;
+    const sheet = generateTransitionSheet(fillImg, baseImg, size, L.transBand);
+    const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
+    const srcId = uid("src");
+    const fillName = L.transFill.split("/")[1] ?? "fill";
+    const baseName = L.transBase.split("/")[1] ?? "base";
+    const name = `${fillName}-on-${baseName}`;
+    const source = await importSourceDataUrl(srcId, name, dataUrl);
+    const tsId = uid("ts");
+    const tiles: TileDef[] = Array.from({ length: 16 }, (_, i) => ({
+      id: uid("t"), char: "", name: `m${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: []
+    }));
+    const tileset: TilesetDoc = {
+      id: tsId, name, sourceId: source.id,
+      chroma: { enabled: false, tolerance: 0, fringe: 0 }, // generated tiles are already clean
+      tileSize: size,
+      grid: { offsetX: 0, offsetY: 0, cols: 16, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 },
+      tiles
+    };
+    const roles: Record<number, string> = {};
+    tiles.forEach((t, mask) => (roles[mask] = `${tsId}/${t.id}`));
+    const terrain: Terrain = { id: uid("terr"), name, tilesetId: tsId, kind: "edge16", roles };
+    mutate((p) => {
+      p.sources.push(source);
+      p.tilesets.push(tileset);
+      p.terrains.push(terrain);
+    });
+    L.activeTerrainId = terrain.id;
+    L.tool = "terrain";
+    await ensureTileImages();
+    setStatus(`Generated transition "${name}" — paint with the terrain tool`);
+    renderSidebar();
+    renderInspector();
+    vp.render();
+  }
+
+  function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
   }
 
   function assignRole(terrain: Terrain, mask: number): void {
