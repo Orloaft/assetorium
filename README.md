@@ -147,8 +147,14 @@ Slice a tilesheet into a normalised atlas with per-tile collision metadata.
 2. **Remove the background** (Tolerance + Fringe — tilesheets especially benefit
    from Fringe cleanup + a small Inset; see
    [above](#background-removal--tolerance-vs-fringe-vs-inset)).
-3. **Slice grid** — set Cols/Rows/Cell W/H/offsets/gap, an **Inset** to trim
-   each cell's border, and *Skip empty cells* → **Generate tiles**.
+3. **Slice tiles** — two ways:
+   - **✨ Auto-detect tiles** — finds each object separated by the (keyed)
+     background and makes it a tile. Ideal for trees/rocks/bushes/props scattered
+     on magenta. Tune **Min size** (ignore specks) and **Pad**. Packed terrain
+     whose cells touch detects as one blob — slice those with the grid instead.
+   - **Generate from grid** — set Cols/Rows/Cell W/H/offsets/gap, an **Inset** to
+     trim each cell's border, and *Skip empty cells*. Best for uniform packed
+     tilesheets with no gaps.
 4. **Set output tile size** (e.g. 32) — every tile is resized to this in the
    atlas.
 5. **Tag tiles** — click a tile (canvas or *All tiles* list) and set its **char**
