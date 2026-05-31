@@ -334,11 +334,12 @@ export function mountSpriteStudio(root: HTMLElement): Editor {
         el("div.hint", {}, `${d.frames.length} frames · ${L.selection.length} selected. In Select mode: click frames to select, then Delete key or 🗑 to remove. Right-click a frame to delete it directly.`))
     );
 
+    // Preview — kept right under slicing so it's visible the moment you have
+    // (or select) frames, before the taller clip-rigging UI.
+    inspector.append(renderPreviewSection(d));
+
     // Animations
     inspector.append(renderClipsSection(d));
-
-    // Preview
-    inspector.append(renderPreviewSection(d));
 
     // Export
     inspector.append(
