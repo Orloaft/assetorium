@@ -15,6 +15,7 @@ interface Local {
   tilesetId: string | null;
   selectedTileId: string | null;
   skipEmpty: boolean;
+  append: boolean;
   detect: { minSize: number; pad: number };
   keyed: HTMLCanvasElement | null;
   keyedKey: string;
@@ -25,7 +26,8 @@ export function mountTileStudio(root: HTMLElement): Editor {
     tilesetId: getProject().tilesets[0]?.id ?? null,
     selectedTileId: null,
     skipEmpty: true,
-    detect: { minSize: 16, pad: 1 },
+    append: false,
+    detect: { minSize: 16, pad: 0 },
     keyed: null,
     keyedKey: ""
   };
@@ -106,7 +108,7 @@ export function mountTileStudio(root: HTMLElement): Editor {
       sourceId: getProject().sources[0]?.id ?? null,
       chroma: defaultChroma(),
       tileSize: 32,
-      grid: { offsetX: 0, offsetY: 0, cols: 8, rows: 8, cellW: 32, cellH: 32, spacing: 0, inset: 0 },
+      grid: { offsetX: 0, offsetY: 0, cols: 8, rows: 8, cellW: 32, cellH: 32, spacing: 0, inset: 4 },
       tiles: []
     };
     mutate((p) => p.tilesets.push(d));
@@ -169,6 +171,8 @@ export function mountTileStudio(root: HTMLElement): Editor {
       el("div.btn-row", {},
         numberField("Inset", G.inset, (v) => mutate(() => (G.inset = v)), { min: 0, width: 50 }),
         checkbox("Skip empty cells", L.skipEmpty, (b) => (L.skipEmpty = b))),
+      el("div.btn-row", {},
+        checkbox("Append (keep existing tiles)", L.append, (b) => (L.append = b))),
       el("div.btn-row", { style: { marginTop: "6px" } },
         button("Generate from grid", () => generateTiles(), "primary"),
         button("Clear", () => { mutate(() => (d.tiles = [])); L.selectedTileId = null; refreshCanvasInspector(); })),
@@ -190,7 +194,10 @@ export function mountTileStudio(root: HTMLElement): Editor {
           textField("Name", sel.name, (v) => mutate(() => (sel.name = v)))),
         checkbox("Blocks movement", sel.blocked, (b) => { mutate(() => (sel.blocked = b)); vp.render(); }),
         checkbox("Blocks sight / projectiles", sel.sightBlocked, (b) => { mutate(() => (sel.sightBlocked = b)); vp.render(); }),
-        button("Delete tile", () => { mutate(() => (d.tiles = d.tiles.filter((t) => t.id !== sel.id))); L.selectedTileId = null; refreshCanvasInspector(); }, "danger")));
+        el("div.btn-row", {},
+          button(`Fit tile size → ${Math.round((sel.w + sel.h) / 2)}`, () => { mutate(() => (d.tileSize = Math.round((sel.w + sel.h) / 2))); setStatus(`Tile size = ${d.tileSize} (from ${sel.name})`); renderInspector(); }),
+          button("Delete tile", () => { mutate(() => (d.tiles = d.tiles.filter((t) => t.id !== sel.id))); L.selectedTileId = null; refreshCanvasInspector(); }, "danger")),
+        el("div.hint", {}, "Fit tile size: click a representative terrain tile, then this, so terrain = 1 world cell and larger props become multi-cell objects in the stage.")));
     }
 
     // Bulk metadata list
@@ -232,8 +239,9 @@ export function mountTileStudio(root: HTMLElement): Editor {
         n++;
       }
     }
-    mutate(() => (d.tiles = tiles));
-    setStatus(`Generated ${tiles.length} tiles`);
+    const base = L.append ? d.tiles.length : 0;
+    mutate(() => (d.tiles = L.append ? [...d.tiles, ...tiles] : tiles));
+    setStatus(`${L.append ? "Appended" : "Generated"} ${tiles.length} tiles (${base + tiles.length} total)`);
     refreshCanvasInspector();
   }
 
@@ -241,14 +249,31 @@ export function mountTileStudio(root: HTMLElement): Editor {
     const d = doc();
     if (!d || !L.keyed) { setStatus("Pick a source image first"); return; }
     setStatus("Detecting tiles…");
+    const base = L.append ? d.tiles.length : 0;
     const rects = detectTiles(L.keyed, L.detect);
     const tiles: TileDef[] = rects.map((r, i) => ({
-      id: uid("t"), char: "", name: `tile-${i}`, x: r.x, y: r.y, w: r.w, h: r.h, blocked: false, sightBlocked: false, tags: []
+      id: uid("t"), char: "", name: `tile-${base + i}`, x: r.x, y: r.y, w: r.w, h: r.h, blocked: false, sightBlocked: false, tags: []
     }));
-    mutate(() => (d.tiles = tiles));
+    // Estimate the base tile unit from the smaller cluster of detected tiles so
+    // terrain ≈ 1 cell and bigger props become multi-cell. Without this, a sheet
+    // of 80px tiles against the default 32px output makes every tile an "object".
+    const suggested = suggestTileSize(rects.map((r) => Math.min(r.w, r.h)));
+    mutate(() => {
+      d.tiles = L.append ? [...d.tiles, ...tiles] : tiles;
+      if (!L.append && suggested) d.tileSize = suggested;
+    });
     L.selectedTileId = null;
-    setStatus(`Auto-detected ${tiles.length} tiles`);
+    setStatus(`Auto-detected ${tiles.length} tiles${!L.append && suggested ? `; set tile size to ${suggested}` : ""}`);
     refreshCanvasInspector();
+  }
+
+  /** Estimate the base tile unit: the 30th-percentile of tile short-edges,
+   * snapped to a tidy value. Robust to a few big props skewing the average. */
+  function suggestTileSize(shortEdges: number[]): number | null {
+    if (!shortEdges.length) return null;
+    const s = shortEdges.slice().sort((a, b) => a - b);
+    const p = s[Math.floor(s.length * 0.3)];
+    return Math.max(8, Math.round(p));
   }
 
   async function exportTileset(d: TilesetDoc): Promise<void> {

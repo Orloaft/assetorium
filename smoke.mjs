@@ -94,7 +94,7 @@ await setField("Cols", 4);
 await setField("Rows", 1);
 await setField("Cell W", 32);
 await setField("Cell H", 32);
-await page.click("button:has-text('Generate tiles')");
+await page.click("button:has-text('Generate from grid')");
 await page.waitForTimeout(300);
 await expectStatus("Generated 4 tiles", "tile/generate");
 // Mark first tile as blocking, then export.

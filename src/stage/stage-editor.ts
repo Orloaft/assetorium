@@ -9,14 +9,27 @@ import { buildZip, textEntry, blobEntry } from "../core/zip";
 import { downloadBlob } from "../core/download";
 import { packTileset } from "../tile/tile-pack";
 
-type Tool = "paint" | "erase" | "fill" | "rect" | "collision";
+type Tool = "paint" | "erase" | "fill" | "rect" | "collision" | "object";
+
+interface RefMeta {
+  cellsW: number;
+  cellsH: number;
+  blocked: boolean;
+}
 
 interface Local {
   stageId: string | null;
   tool: Tool;
   activeRef: string | null; // "<tilesetId>/<tileId>"
   activeLayer: number;
+  /** Native-aspect tile art (cropped, not squished), keyed by ref. */
   tileImg: Map<string, HTMLCanvasElement>;
+  /** Per-ref footprint (in stage cells) + collision flag. */
+  refMeta: Map<string, RefMeta>;
+  selectedObjectId: string | null;
+  /** Shift-clicked palette tiles to paint randomly among (terrain variation). */
+  scatterRefs: string[];
+  scatter: boolean;
   hover: { x: number; y: number } | null;
   rectStart: { x: number; y: number } | null;
   collisionPaintValue: boolean;
@@ -35,6 +48,10 @@ export function mountStageEditor(root: HTMLElement): Editor {
     activeRef: null,
     activeLayer: 0,
     tileImg: new Map(),
+    refMeta: new Map(),
+    selectedObjectId: null,
+    scatterRefs: [],
+    scatter: false,
     hover: null,
     rectStart: null,
     collisionPaintValue: true,
@@ -78,6 +95,15 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const c = cellAt(d, wx, wy);
     if (!c) return;
     const layer = d.layers[L.activeLayer];
+    if (L.tool === "object") {
+      if (isDown) {
+        // Click an existing object to select it; otherwise place a new one.
+        const hit = topObjectAt(d, c.x, c.y);
+        if (hit) { L.selectedObjectId = hit.id; renderInspector(); vp.render(); }
+        else placeObject(d, c.x, c.y);
+      }
+      return;
+    }
     if (L.tool === "rect") {
       if (isDown) L.rectStart = c;
       vp.render();
@@ -90,14 +116,24 @@ export function mountStageEditor(root: HTMLElement): Editor {
       return;
     }
     if (L.tool === "fill") {
-      if (isDown && layer) floodFill(layer, c.x, c.y, L.activeRef);
+      if (isDown && layer) floodFill(layer, c.x, c.y);
       return;
     }
     // paint / erase (drag-and-drop placement)
     if (!layer) return;
-    const ref = L.tool === "erase" ? null : L.activeRef;
+    const ref = L.tool === "erase" ? null : pickRef();
     if (layer.data[c.y][c.x] !== ref) mutate(() => (layer.data[c.y][c.x] = ref));
     vp.render();
+  }
+
+  /** The tile to lay down for one cell: a random pick from the scatter set when
+   * scatter is on, else the single active tile. Drives natural-looking terrain
+   * variation without manual placement. */
+  function pickRef(): string | null {
+    if (L.scatter && L.scatterRefs.length) {
+      return L.scatterRefs[Math.floor(Math.random() * L.scatterRefs.length)];
+    }
+    return L.activeRef;
   }
 
   function onPaintEnd(wx: number, wy: number): void {
@@ -108,22 +144,27 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const x0 = Math.min(L.rectStart.x, c.x), x1 = Math.max(L.rectStart.x, c.x);
     const y0 = Math.min(L.rectStart.y, c.y), y1 = Math.max(L.rectStart.y, c.y);
     mutate(() => {
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) layer.data[y][x] = L.activeRef;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) layer.data[y][x] = pickRef();
     });
     L.rectStart = null;
     vp.render();
   }
 
-  function floodFill(layer: StageLayer, x: number, y: number, ref: string | null): void {
+  function floodFill(layer: StageLayer, x: number, y: number): void {
     const target = layer.data[y][x];
-    if (target === ref) return;
+    const cols = layer.data[0].length;
     const stack = [[x, y]];
+    const seen = new Set<number>(); // visited cells, so scatter (which may re-pick
+    // the target value) can't cause reprocessing / infinite loops
     mutate(() => {
       while (stack.length) {
         const [cx, cy] = stack.pop()!;
-        if (cx < 0 || cy < 0 || cx >= layer.data[0].length || cy >= layer.data.length) continue;
+        if (cx < 0 || cy < 0 || cx >= cols || cy >= layer.data.length) continue;
+        const key = cy * cols + cx;
+        if (seen.has(key)) continue;
         if (layer.data[cy][cx] !== target) continue;
-        layer.data[cy][cx] = ref;
+        seen.add(key);
+        layer.data[cy][cx] = pickRef();
         stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
       }
     });
@@ -134,21 +175,39 @@ export function mountStageEditor(root: HTMLElement): Editor {
   async function ensureTileImages(): Promise<void> {
     const project = getProject();
     L.tileImg.clear();
+    L.refMeta.clear();
     for (const ts of project.tilesets) {
       if (!ts.sourceId) continue;
       const keyed = await getKeyedCanvas(ts.sourceId, ts.chroma);
+      const unit = ts.tileSize || 32; // a tile this many source px ≈ one cell
       for (const tile of ts.tiles) {
-        const ix = Math.max(0, tile.x + ts.grid.inset);
-        const iy = Math.max(0, tile.y + ts.grid.inset);
-        const iw = Math.max(1, tile.w - ts.grid.inset * 2);
-        const ih = Math.max(1, tile.h - ts.grid.inset * 2);
-        const cell = cropCanvas(keyed, ix, iy, iw, ih);
-        const thumb = newCanvas(64, 64);
-        const g = ctx2d(thumb);
-        g.drawImage(cell, 0, 0, iw, ih, 0, 0, 64, 64);
-        L.tileImg.set(`${ts.id}/${tile.id}`, thumb);
+        // Inset trims the soft anti-aliased fringe off terrain tiles so they
+        // tile seamlessly; objects (multi-cell decorations) keep their full
+        // silhouette, so they get no inset.
+        const terrain = tile.w <= unit * 1.6 && tile.h <= unit * 1.6;
+        const inset = terrain ? ts.grid.inset : 0;
+        const ix = Math.max(0, tile.x + inset);
+        const iy = Math.max(0, tile.y + inset);
+        const iw = Math.max(1, tile.w - inset * 2);
+        const ih = Math.max(1, tile.h - inset * 2);
+        const ref = `${ts.id}/${tile.id}`;
+        // Keep native aspect (no squish) — used both for terrain cells (drawn
+        // stretched to one cell) and multi-cell objects (drawn to footprint).
+        L.tileImg.set(ref, cropCanvas(keyed, ix, iy, iw, ih));
+        L.refMeta.set(ref, {
+          cellsW: Math.max(1, Math.round(iw / unit)),
+          cellsH: Math.max(1, Math.round(ih / unit)),
+          blocked: tile.blocked
+        });
       }
     }
+  }
+
+  /** A ref is "big" (an object/decoration) if it spans more than one cell. */
+  function isObjectRef(ref: string | null): boolean {
+    if (!ref) return false;
+    const m = L.refMeta.get(ref);
+    return !!m && (m.cellsW > 1 || m.cellsH > 1);
   }
 
   // ---- Render ------------------------------------------------------------
@@ -190,16 +249,26 @@ export function mountStageEditor(root: HTMLElement): Editor {
           if (d.collision[y][x]) g.fillRect(x * ts, y * ts, ts, ts);
     }
 
-    // objects
-    for (const o of d.objects) {
-      g.strokeStyle = o.blocking ? "#ff8d6b" : "#7ee0a0";
-      g.lineWidth = 2 / vp.scale;
-      g.strokeRect(o.x * ts, o.y * ts, o.w * ts, o.h * ts);
-      g.fillStyle = "rgba(0,0,0,0.5)";
-      const fs = 11 / vp.scale;
-      g.font = `${fs}px monospace`;
-      g.fillStyle = "#fff";
-      g.fillText(o.key, o.x * ts + 2 / vp.scale, o.y * ts + fs);
+    // objects — y-sorted by base so nearer (lower) objects overlap farther ones,
+    // the standard top-down depth trick.
+    const sorted = [...d.objects].sort((a, b) => a.y + a.h - (b.y + b.h));
+    const showObjBounds = L.tool === "object";
+    for (const o of sorted) {
+      const img = o.tileRef ? L.tileImg.get(o.tileRef) : null;
+      if (img) {
+        g.drawImage(img, 0, 0, img.width, img.height, o.x * ts, o.y * ts, o.w * ts, o.h * ts);
+      } else {
+        g.fillStyle = "rgba(0,0,0,0.5)";
+        const fs = 11 / vp.scale;
+        g.font = `${fs}px monospace`;
+        g.fillStyle = "#fff";
+        g.fillText(o.key, o.x * ts + 2 / vp.scale, o.y * ts + fs);
+      }
+      if (showObjBounds || o.id === L.selectedObjectId) {
+        g.strokeStyle = o.id === L.selectedObjectId ? "#ffcf6b" : o.blocking ? "#ff8d6b" : "#7ee0a0";
+        g.lineWidth = (o.id === L.selectedObjectId ? 2 : 1) / vp.scale;
+        g.strokeRect(o.x * ts, o.y * ts, o.w * ts, o.h * ts);
+      }
     }
 
     // hover
@@ -241,12 +310,36 @@ export function mountStageEditor(root: HTMLElement): Editor {
       const row = el("div.palette");
       for (const tile of ts.tiles) {
         const ref = `${ts.id}/${tile.id}`;
-        const sw = el("div.swatch" + (L.activeRef === ref ? ".active" : ""), {
-          title: tile.name + (tile.blocked ? " (blocks)" : ""),
-          onclick: () => { L.activeRef = ref; L.tool = "paint"; renderInspector(); renderSidebar(); }
+        const big = isObjectRef(ref);
+        const inScatter = L.scatterRefs.includes(ref);
+        const sw = el("div.swatch" + (L.activeRef === ref ? ".active" : "") + (inScatter ? ".scatter" : ""), {
+          title: tile.name + (tile.blocked ? " (blocks)" : "") + (big ? " — object" : "") + "\n(shift-click = add to scatter set)",
+          onclick: (e: MouseEvent) => {
+            if (e.shiftKey || e.ctrlKey) {
+              // Toggle membership in the scatter set (paint random among these).
+              const i = L.scatterRefs.indexOf(ref);
+              if (i >= 0) L.scatterRefs.splice(i, 1); else L.scatterRefs.push(ref);
+              L.scatter = L.scatterRefs.length > 0;
+              L.tool = "paint";
+            } else {
+              // Big tiles are placed as multi-cell objects; small ones painted.
+              L.activeRef = ref;
+              L.scatterRefs = [];
+              L.scatter = false;
+              L.tool = big ? "object" : "paint";
+            }
+            renderInspector();
+            renderSidebar();
+          }
         });
         const img = L.tileImg.get(ref);
-        if (img) { const c = img.cloneNode() as HTMLCanvasElement; c.getContext("2d")!.drawImage(img, 0, 0); sw.append(c); }
+        if (img) {
+          const c = newCanvas(img.width, img.height);
+          ctx2d(c).drawImage(img, 0, 0);
+          c.style.objectFit = "contain"; // preserve aspect in the square swatch
+          sw.append(c);
+        }
+        if (big) sw.append(el("span.badge", { style: { left: "-2px", right: "auto", color: "#7ee0a0" } }, "◳"));
         if (tile.blocked) sw.append(el("span.badge", {}, "⛌"));
         row.append(sw);
       }
@@ -314,8 +407,15 @@ export function mountStageEditor(root: HTMLElement): Editor {
           d.collision[y][x] = blocked;
         }
       }
+      // Blocking object footprints also occupy collision cells.
+      for (const o of d.objects) {
+        if (!o.blocking) continue;
+        for (let y = o.y; y < o.y + o.h && y < d.rows; y++)
+          for (let x = o.x; x < o.x + o.w && x < d.cols; x++)
+            if (y >= 0 && x >= 0) d.collision[y][x] = true;
+      }
     });
-    setStatus("Collisions recomputed from tile flags");
+    setStatus("Collisions recomputed from tiles + blocking objects");
     vp.render();
   }
 
@@ -336,12 +436,13 @@ export function mountStageEditor(root: HTMLElement): Editor {
     inspector.append(el("div.section", {},
       el("h3", {}, "Tools"),
       el("div.btn-row", {},
-        ...(["paint", "erase", "fill", "rect", "collision"] as Tool[]).map((t) =>
+        ...(["paint", "erase", "fill", "rect", "object", "collision"] as Tool[]).map((t) =>
           button(t, () => { L.tool = t; renderInspector(); }, L.tool === t ? "active" : ""))),
       el("div.btn-row", { style: { marginTop: "6px" } },
         checkbox("Grid", L.showGrid, (b) => { L.showGrid = b; vp.render(); }),
-        checkbox("Show collision", L.showCollision, (b) => { L.showCollision = b; vp.render(); })),
-      el("div.hint", {}, "Paint = drag tiles on. Rect = drag a filled box. Collision = drag to toggle blocked cells.")));
+        checkbox("Show collision", L.showCollision, (b) => { L.showCollision = b; vp.render(); }),
+        checkbox(`🎲 Scatter (${L.scatterRefs.length})`, L.scatter, (b) => { L.scatter = b; renderInspector(); })),
+      el("div.hint", {}, "Paint/fill/rect place 1-cell terrain tiles. Object stamps a multi-cell decoration (trees, rocks) at true proportions — picking a ◳ palette tile switches here automatically. Scatter: shift-click several terrain tiles, then paint/fill randomly among them for natural variation. Collision = drag to toggle blocked cells.")));
 
     // Layers
     const layerList = el("div.list");
@@ -369,15 +470,17 @@ export function mountStageEditor(root: HTMLElement): Editor {
     // Objects
     const objList = el("div.list");
     d.objects.forEach((o) => {
-      objList.append(el("div.list-item", {},
+      objList.append(el("div.list-item" + (o.id === L.selectedObjectId ? ".active" : ""),
+        { onclick: () => { L.selectedObjectId = o.id; refreshCanvasInspector(); } },
         el("div.name", {}, `${o.key} @${o.x},${o.y}`),
         el("span.meta", {}, `${o.w}×${o.h}`),
-        button("✕", () => { mutate(() => (d.objects = d.objects.filter((x) => x.id !== o.id))); refreshCanvasInspector(); }, "sm danger")));
+        button("✕", (e: Event) => { e.stopPropagation(); mutate(() => (d.objects = d.objects.filter((x) => x.id !== o.id))); if (L.selectedObjectId === o.id) L.selectedObjectId = null; refreshCanvasInspector(); }, "sm danger")));
     });
     inspector.append(el("div.section", {},
       el("h3", {}, "Objects"),
+      el("div.hint", {}, "Use the object tool, then click the map to stamp the selected palette tile at its true proportions. Click an object to select/move it."),
       objList,
-      button("+ Object at center", () => addObject(d)),
+      button("+ Marker object", () => addObject(d)),
       renderObjectEditor(d)));
 
     inspector.append(el("div.section", {},
@@ -387,22 +490,48 @@ export function mountStageEditor(root: HTMLElement): Editor {
   }
 
   function renderObjectEditor(d: StageDoc): HTMLElement {
-    const last = d.objects[d.objects.length - 1];
-    if (!last) return el("div.hint", {}, "Objects mark props/structures and their blocking footprint.");
+    const sel = d.objects.find((o) => o.id === L.selectedObjectId) ?? d.objects[d.objects.length - 1];
+    if (!sel) return el("div.hint", {}, "No objects yet.");
     return el("div", { style: { marginTop: "6px" } },
-      el("div.hint", {}, "Edit last object:"),
-      textField("Key", last.key, (v) => mutate(() => (last.key = v))),
+      el("div.hint", {}, `Editing: ${sel.key}`),
+      textField("Key", sel.key, (v) => mutate(() => (sel.key = v))),
       el("div.btn-row", {},
-        numberField("X", last.x, (v) => { mutate(() => (last.x = v)); vp.render(); }, { width: 48 }),
-        numberField("Y", last.y, (v) => { mutate(() => (last.y = v)); vp.render(); }, { width: 48 }),
-        numberField("W", last.w, (v) => { mutate(() => (last.w = v)); vp.render(); }, { width: 44 }),
-        numberField("H", last.h, (v) => { mutate(() => (last.h = v)); vp.render(); }, { width: 44 })),
-      checkbox("Blocking footprint", last.blocking, (b) => { mutate(() => (last.blocking = b)); vp.render(); }));
+        numberField("X", sel.x, (v) => { mutate(() => (sel.x = v)); vp.render(); }, { width: 48 }),
+        numberField("Y", sel.y, (v) => { mutate(() => (sel.y = v)); vp.render(); }, { width: 48 }),
+        numberField("W", sel.w, (v) => { mutate(() => (sel.w = v)); vp.render(); }, { width: 44 }),
+        numberField("H", sel.h, (v) => { mutate(() => (sel.h = v)); vp.render(); }, { width: 44 })),
+      checkbox("Blocking footprint", sel.blocking, (b) => { mutate(() => (sel.blocking = b)); vp.render(); }));
+  }
+
+  /** Topmost object whose footprint covers cell (x,y), preferring later-drawn. */
+  function topObjectAt(d: StageDoc, x: number, y: number): PlacedObject | null {
+    for (let i = d.objects.length - 1; i >= 0; i--) {
+      const o = d.objects[i];
+      if (x >= o.x && x < o.x + o.w && y >= o.y && y < o.y + o.h) return o;
+    }
+    return null;
+  }
+
+  /** Stamp the active palette tile as an object at its native cell footprint,
+   * anchored so its base row sits on the clicked cell (top-down trees etc). */
+  function placeObject(d: StageDoc, cx: number, cy: number): void {
+    if (!L.activeRef) { setStatus("Pick a palette tile first"); return; }
+    const m = L.refMeta.get(L.activeRef) ?? { cellsW: 1, cellsH: 1, blocked: false };
+    const w = m.cellsW, h = m.cellsH;
+    const x = Math.max(0, Math.min(d.cols - w, cx - (w >> 1)));
+    const y = Math.max(0, Math.min(d.rows - h, cy - (h - 1)));
+    const key = L.activeRef.split("/")[1] ?? "object";
+    const o: PlacedObject = { id: uid("obj"), key, tileRef: L.activeRef, x, y, w, h, blocking: m.blocked };
+    mutate(() => d.objects.push(o));
+    L.selectedObjectId = o.id;
+    setStatus(`Placed ${key} (${w}×${h})`);
+    refreshCanvasInspector();
   }
 
   function addObject(d: StageDoc): void {
-    const o: PlacedObject = { id: uid("obj"), key: "prop", x: Math.floor(d.cols / 2), y: Math.floor(d.rows / 2), w: 2, h: 2, blocking: true };
+    const o: PlacedObject = { id: uid("obj"), key: "marker", x: Math.floor(d.cols / 2), y: Math.floor(d.rows / 2), w: 2, h: 2, blocking: true };
     mutate(() => d.objects.push(o));
+    L.selectedObjectId = o.id;
     refreshCanvasInspector();
   }
 
@@ -453,6 +582,11 @@ export function mountStageEditor(root: HTMLElement): Editor {
           const img = ref && L.tileImg.get(ref);
           if (img) g.drawImage(img, 0, 0, img.width, img.height, x * ts, y * ts, ts, ts);
         }
+    }
+    // Objects on top, y-sorted (matches the editor's depth order).
+    for (const o of [...d.objects].sort((a, b) => a.y + a.h - (b.y + b.h))) {
+      const img = o.tileRef ? L.tileImg.get(o.tileRef) : null;
+      if (img) g.drawImage(img, 0, 0, img.width, img.height, o.x * ts, o.y * ts, o.w * ts, o.h * ts);
     }
     return c;
   }

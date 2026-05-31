@@ -78,6 +78,14 @@ export function buildStageManifest(stage: StageDoc, project: Project): StageMani
     ascii = { legend, rows };
   }
 
+  // Resolve objects first so any object-only tilesets are counted before the
+  // tilesets list is built.
+  const objects = stage.objects.map((o) => {
+    const r = resolve(o.tileRef ?? null);
+    if (r) usedTilesets.set(r.tileset.id, r.tileset);
+    return { key: o.key, tile: r ? `${r.tilesetName}:${r.index}` : undefined, x: o.x, y: o.y, w: o.w, h: o.h, blocking: o.blocking };
+  });
+
   return {
     schema: "asset-forge/stage@1",
     name: stage.name,
@@ -92,7 +100,7 @@ export function buildStageManifest(stage: StageDoc, project: Project): StageMani
     })),
     layers,
     collision: stage.collision.map((row) => row.map((b) => (b ? 1 : 0))),
-    objects: stage.objects.map((o) => ({ key: o.key, x: o.x, y: o.y, w: o.w, h: o.h, blocking: o.blocking })),
+    objects,
     ascii
   };
 }

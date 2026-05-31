@@ -143,6 +143,7 @@ body {
   image-rendering: pixelated; position: relative;
 }
 .swatch.active { border-color: var(--accent); }
+.swatch.scatter { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn) inset; }
 .swatch canvas, .swatch img { width: 100%; height: 100%; image-rendering: pixelated; }
 .swatch .badge { position: absolute; bottom: -2px; right: -2px; font-size: 9px; background: var(--bg); border-radius: 3px; padding: 0 2px; color: var(--warn); }
 

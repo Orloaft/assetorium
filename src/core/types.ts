@@ -118,9 +118,14 @@ export interface TilesetDoc {
 
 export interface PlacedObject {
   id: string;
-  /** Reference into a sprite doc clip frame, or a free label. */
+  /** Free label / sprite key for the object. */
   key: string;
-  x: number; // tile coords
+  /** Tile this object draws, "<tilesetId>/<tileId>". When set, the object is
+   * rendered with that tile's art at native proportion across its w×h cells
+   * (used for multi-cell decorations like trees/rocks that shouldn't be
+   * squished into a single terrain cell). */
+  tileRef?: string;
+  x: number; // tile coords (top-left)
   y: number;
   w: number; // tile span
   h: number;
@@ -212,7 +217,7 @@ export interface StageManifest {
   tilesets: Array<{ id: string; name: string; image: string; manifest: string }>;
   layers: Array<{ name: string; type: "tile"; data: (string | null)[][] }>;
   collision: number[][];
-  objects: Array<{ key: string; x: number; y: number; w: number; h: number; blocking: boolean }>;
+  objects: Array<{ key: string; tile?: string; x: number; y: number; w: number; h: number; blocking: boolean }>;
   /** Convenience ascii rendering: one char per ground-layer cell + legend. */
   ascii?: { legend: Record<string, string>; rows: string[] };
 }
