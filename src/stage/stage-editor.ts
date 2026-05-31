@@ -10,6 +10,7 @@ import { downloadBlob } from "../core/download";
 import { packTileset } from "../tile/tile-pack";
 import { resolveCell, EDGE16_SLOTS, maskGlyph } from "./autotile";
 import { generateTransitionSheet } from "./transition-gen";
+import { classifyTile, tileCenter } from "./classify";
 import { importSourceDataUrl } from "../core/image";
 import type { Terrain, TilesetDoc, TileDef } from "../core/types";
 
@@ -503,7 +504,9 @@ export function mountStageEditor(root: HTMLElement): Editor {
         button("Set base", () => { L.transBase = L.activeRef; renderInspector(); }, "sm"), thumb(baseImg)),
       el("div.btn-row", { style: { alignItems: "center" } },
         numberField("Blend px", L.transBand, (v) => (L.transBand = Math.max(0, v)), { min: 0, max: 64, width: 56 }),
-        button("✨ Generate transition", () => createSynthesizedTerrain(), L.transFill && L.transBase ? "primary" : "")));
+        button("✨ Generate transition", () => createSynthesizedTerrain(), L.transFill && L.transBase ? "primary" : "")),
+      el("div.hint", { style: { marginTop: "4px" } }, "Or, if the sheet already has edge/corner tiles: set fill = the primary terrain, base = the other, then auto-build — the tool classifies each tile's edges and assigns the 16 roles for you."),
+      el("div.btn-row", {}, button("🧩 Auto-build from sheet", () => autoBuildTerrain(), L.transFill && L.transBase ? "primary" : "")));
 
     const terrain = project.terrains.find((t) => t.id === L.activeTerrainId);
     if (terrain) {
@@ -587,6 +590,42 @@ export function mountStageEditor(root: HTMLElement): Editor {
     renderSidebar();
     renderInspector();
     vp.render();
+  }
+
+  /** Build an edge16 terrain from a sheet that already has edge/corner tiles, by
+   * classifying each tile's edges against the two chosen fills. No manual slots. */
+  function autoBuildTerrain(): void {
+    if (!L.transFill || !L.transBase) { setStatus("Set a fill (primary) and base (secondary) tile first"); return; }
+    const pImg = L.tileImg.get(L.transFill);
+    const sImg = L.tileImg.get(L.transBase);
+    if (!pImg || !sImg) { setStatus("Tile art not loaded"); return; }
+    const primary = tileCenter(pImg);
+    const secondary = tileCenter(sImg);
+    if (!primary || !secondary) { setStatus("Could not read fill colours"); return; }
+
+    const tsId = L.transFill.split("/")[0];
+    const ts = getProject().tilesets.find((t) => t.id === tsId);
+    if (!ts) return;
+    const roles: Record<number, string> = {};
+    const filled = new Set<number>();
+    let scanned = 0;
+    for (const tile of ts.tiles) {
+      const ref = `${tsId}/${tile.id}`;
+      const img = L.tileImg.get(ref);
+      if (!img) continue;
+      const cl = classifyTile(img, primary, secondary);
+      if (!cl || !cl.centerPrimary) continue; // only tiles whose body is the primary terrain
+      scanned++;
+      if (!filled.has(cl.mask)) { roles[cl.mask] = ref; filled.add(cl.mask); }
+    }
+    if (!roles[15]) roles[15] = L.transFill; // ensure a solid centre
+    const name = `${L.transFill.split("/")[1]}-terrain`;
+    const terrain: Terrain = { id: uid("terr"), name, tilesetId: tsId, kind: "edge16", roles };
+    mutate((p) => p.terrains.push(terrain));
+    L.activeTerrainId = terrain.id;
+    L.tool = "terrain";
+    setStatus(`Auto-built "${name}": ${Object.keys(roles).length}/16 edge roles from ${scanned} primary tiles`);
+    refreshCanvasInspector();
   }
 
   function blobToDataUrl(blob: Blob): Promise<string> {

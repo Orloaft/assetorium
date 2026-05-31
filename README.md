@@ -190,12 +190,17 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
    edge/corner tile from its neighbours, so grass↔dirt↔water borders resolve
    themselves. Resolved tiles land in the normal tile layer, so export is
    unchanged. (Current model: `edge16` — straight edges + outer corners.)
+   - **Auto-build from sheet** — if the sheet already contains edge/corner
+     transition tiles: **Set fill** = the primary terrain tile, **Set base** =
+     the other, then **🧩 Auto-build from sheet**. The tool classifies every
+     tile's edges by colour similarity to the two fills, works out which tile is
+     which edge/corner, and assigns the 16 roles for you — no manual slots.
+     (Use Inset 0 for these so the transition edges aren't trimmed.)
    - **Synthesized transitions** — for sheets with only *full-fill* tiles (no
-     edge/corner art, like many biome sheets): select a tile and **Set fill**,
-     select another and **Set base**, then **✨ Generate transition**. It blends
-     fill over base with an ordered (Bayer) dither and builds a ready-to-paint
-     16-tile terrain — so grass softly blends into dirt with no hand-drawn
-     transition tiles.
+     edge/corner art): select a tile and **Set fill**, select another and
+     **Set base**, then **✨ Generate transition**. It blends fill over base with
+     an ordered (Bayer) dither and builds a ready-to-paint 16-tile terrain — so
+     grass softly blends into dirt with no hand-drawn transition tiles.
 6. **Layers** — multiple tile layers (e.g. `ground`, `overlay`); reorder,
    rename, hide. Painting affects the active layer.
 6. **Collisions** — **Recompute from tiles + objects** seeds the grid from each
