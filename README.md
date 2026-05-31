@@ -198,12 +198,17 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
    object to select/move it.
 5. **Paint *areas* (the HoMM3 way)** — the fastest path: slice a biome sheet,
    then in the Stage Editor click **✨ Auto-create terrains from tileset**. It
-   clusters the sheet's ground/water surfaces, sets a matching tile size, and
-   builds a ready-to-paint terrain for each (grass, dirt, sand, water…) in
-   priority order. Pick one, grab the **terrain** tool + a **brush**, and paint —
-   interiors use the seamless centre tile and only the perimeter gets
-   edge/corner tiles, so you get **contiguous lakes/fields, not a grid of
-   bordered squares**.
+   clusters the sheet's surfaces into a few clean terrains (grass, dirt, sand,
+   water…), sets a matching tile size, and for each non-base surface
+   **synthesizes soft dither borders over the base** — so painting *any* terrain
+   blends into what's under it, regardless of the sheet's edge art.
+   - Then: pick the **base** terrain and **▣ Fill active layer** to lay the
+     ground, select another terrain, grab the **terrain** tool + a **brush**, and
+     paint. You get **contiguous regions that blend at the edges, not a grid of
+     bordered squares or flat blocky cutouts**.
+   - Want hand-drawn shore/edge tiles instead of synthesized dither? Use
+     **🧩 Auto-build from sheet** (set fill + base) — it assigns the sheet's real
+     edge/corner tiles.
    - **Palette badges**: `◳` = multi-cell object; `◱` (amber) = an *edged* tile
      (pond/patch with a baked border) — painting it raw repeats the border, so
      make it a **terrain** instead; no badge = a seamless fill you can paint

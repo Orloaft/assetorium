@@ -661,39 +661,41 @@ export function mountStageEditor(root: HTMLElement): Editor {
     if (!fillImg || !baseImg) { setStatus("Tile art not loaded"); return; }
     setStatus("Generating transition tiles…");
     const size = d.tileSize || 48;
-    const sheet = generateTransitionSheet(fillImg, baseImg, size, L.transBand);
-    const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
-    const srcId = uid("src");
-    const fillName = L.transFill.split("/")[1] ?? "fill";
-    const baseName = L.transBase.split("/")[1] ?? "base";
-    const name = `${fillName}-on-${baseName}`;
-    const source = await importSourceDataUrl(srcId, name, dataUrl);
-    const tsId = uid("ts");
-    const tiles: TileDef[] = Array.from({ length: 16 }, (_, i) => ({
-      id: uid("t"), char: "", name: `m${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: []
-    }));
-    const tileset: TilesetDoc = {
-      id: tsId, name, sourceId: source.id,
-      chroma: { enabled: false, tolerance: 0, fringe: 0 }, // generated tiles are already clean
-      tileSize: size,
-      grid: { offsetX: 0, offsetY: 0, cols: 16, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 },
-      tiles
-    };
-    const roles: Record<number, string> = {};
-    tiles.forEach((t, mask) => (roles[mask] = `${tsId}/${t.id}`));
-    const terrain: Terrain = { id: uid("terr"), name, tilesetId: tsId, kind: "edge16", roles };
-    mutate((p) => {
-      p.sources.push(source);
-      p.tilesets.push(tileset);
-      p.terrains.push(terrain);
-    });
-    L.activeTerrainId = terrain.id;
+    const name = `${L.transFill.split("/")[1] ?? "fill"}-on-${L.transBase.split("/")[1] ?? "base"}`;
+    const built = await buildSynthTerrain(fillImg, baseImg, size, name, L.transBand);
+    mutate((p) => { p.sources.push(built.source); p.tilesets.push(built.tileset); p.terrains.push(built.terrain); });
+    L.activeTerrainId = built.terrain.id;
     L.tool = "terrain";
     await ensureTileImages();
     setStatus(`Generated transition "${name}" — paint with the terrain tool`);
     renderSidebar();
     renderInspector();
     vp.render();
+  }
+
+  /** Generate a synthesized edge16 terrain: `fillImg` dither-blended over
+   * `baseImg`, packed as a 16-tile sheet → source + tileset + terrain. Returns
+   * the docs (caller mutates). */
+  async function buildSynthTerrain(
+    fillImg: HTMLCanvasElement, baseImg: HTMLCanvasElement, size: number, name: string, band: number
+  ): Promise<{ source: import("../core/types").SourceImage; tileset: TilesetDoc; terrain: Terrain }> {
+    const sheet = generateTransitionSheet(fillImg, baseImg, size, band);
+    const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
+    const source = await importSourceDataUrl(uid("src"), name, dataUrl);
+    const tsId = uid("ts");
+    const tiles: TileDef[] = Array.from({ length: 16 }, (_, i) => ({
+      id: uid("t"), char: "", name: `m${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: []
+    }));
+    const tileset: TilesetDoc = {
+      id: tsId, name, sourceId: source.id,
+      chroma: { enabled: false, tolerance: 0, fringe: 0 },
+      tileSize: size,
+      grid: { offsetX: 0, offsetY: 0, cols: 16, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 },
+      tiles
+    };
+    const roles: Record<number, string> = {};
+    tiles.forEach((t, mask) => (roles[mask] = `${tsId}/${t.id}`));
+    return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "edge16", roles } };
   }
 
   /** Build an edge16 terrain from a sheet that already has edge/corner tiles, by
@@ -776,42 +778,62 @@ export function mountStageEditor(root: HTMLElement): Editor {
         clusters.push({ color: [...f.color], sum: [...f.color], members: [f] });
       }
     }
-    const surfaces = clusters.filter((c) => c.members.length >= 2).sort((a, b) => b.members.length - a.members.length);
+    // Merge colour clusters that name to the same surface (grass variants, etc.)
+    // so we end up with a few clean surfaces, not many near-duplicates.
+    const named = new Map<string, { name: string; color: RGB; members: Fill[] }>();
+    for (const c of clusters) {
+      if (c.members.length < 2) continue;
+      const nm = colorName(c.color);
+      const ex = named.get(nm);
+      if (ex) ex.members.push(...c.members);
+      else named.set(nm, { name: nm, color: c.color, members: [...c.members] });
+    }
+    let surfaces = [...named.values()].sort((a, b) => b.members.length - a.members.length).slice(0, 5);
     if (!surfaces.length) { setStatus("No dominant surfaces found — try slicing with a fixed grid"); return; }
 
-    const built: Array<{ color: RGB; size: number; terrain: Terrain }> = [];
-    for (const surf of surfaces) {
-      const primary = surf.color;
-      const secondary = (surfaces.find((s) => s !== surf) ?? surf).color;
-      const roles: Record<number, string> = {};
-      const filled = new Set<number>();
-      for (const tile of ts.tiles) {
-        const ref = `${tsId}/${tile.id}`;
-        const img = L.tileImg.get(ref);
-        if (!img) continue;
-        const cl = classifyTileBlob(img, primary, secondary);
-        if (!cl || !cl.centerPrimary) continue;
-        if (!filled.has(cl.key)) { roles[cl.key] = ref; filled.add(cl.key); }
-      }
-      if (!roles[255]) roles[255] = surf.members[0].ref;
-      built.push({ color: primary, size: surf.members.length, terrain: { id: uid("terr"), name: colorName(primary), tilesetId: tsId, kind: "blob47", roles } });
+    // Representative seamless fill image for a surface.
+    const rep = (s: { members: Fill[] }): { ref: string; img: HTMLCanvasElement } | null => {
+      for (const m of s.members) { const img = L.tileImg.get(m.ref); if (img && isSeamlessFill(img)) return { ref: m.ref, img }; }
+      const img = L.tileImg.get(s.members[0].ref);
+      return img ? { ref: s.members[0].ref, img } : null;
+    };
+    const isWet = (n: string): boolean => n === "water" || n === "shallows";
+    // Base = largest dry surface (the floor everything blends into).
+    const baseSurf = surfaces.find((s) => !isWet(s.name)) ?? surfaces[0];
+    const baseRep = rep(baseSurf);
+    if (!baseRep) { setStatus("Couldn't read a base fill tile"); return; }
+
+    // Base terrain = a plain fill (it's the floor; no borders needed).
+    const newSources: Array<import("../core/types").SourceImage> = [];
+    const newTilesets: TilesetDoc[] = [];
+    const newTerrains: Terrain[] = [{ id: uid("terr"), name: baseSurf.name, tilesetId: tsId, kind: "edge16", roles: { 0: baseRep.ref, 15: baseRep.ref } }];
+
+    // Every other surface = synthesized soft borders over the base, so painting
+    // it always blends (independent of the sheet's edge art). Non-water first,
+    // water last so water sits highest priority.
+    const band = Math.max(2, Math.round(unit * 0.18));
+    const others = surfaces.filter((s) => s !== baseSurf).sort((a, b) => (isWet(a.name) ? 1 : 0) - (isWet(b.name) ? 1 : 0) || b.members.length - a.members.length);
+    for (const s of others) {
+      const r = rep(s);
+      if (!r) continue;
+      const built = await buildSynthTerrain(r.img, baseRep.img, unit, s.name, band);
+      newSources.push(built.source);
+      newTilesets.push(built.tileset);
+      newTerrains.push(built.terrain);
     }
-    // Priority: largest ground = base (low); water highest.
-    const water = built.filter((b) => colorName(b.color) === "water");
-    const rest = built.filter((b) => colorName(b.color) !== "water").sort((a, b) => b.size - a.size);
-    const ordered = [...rest, ...water];
-    const counts: Record<string, number> = {};
-    for (const b of ordered) { const base = b.terrain.name; counts[base] = (counts[base] ?? 0) + 1; if (counts[base] > 1) b.terrain.name = `${base}-${counts[base]}`; }
+
     mutate((p) => {
       ts.tileSize = unit;
       if (d) d.tileSize = unit;
-      for (const b of ordered) p.terrains.push(b.terrain);
+      for (const s of newSources) p.sources.push(s);
+      for (const t of newTilesets) p.tilesets.push(t);
+      for (const t of newTerrains) p.terrains.push(t);
     });
     await ensureTileImages(); // tile size changed → recompute crops/footprints
     if (d) vp.fit(d.cols * d.tileSize, d.rows * d.tileSize);
-    L.activeTerrainId = ordered[0]?.terrain.id ?? null;
+    L.activeTerrainId = newTerrains[0]?.id ?? null;
     L.tool = "terrain";
-    setStatus(`Auto-created ${ordered.length} terrain(s) @${unit}px: ${ordered.map((b) => b.terrain.name).join(", ")} — pick one + paint`);
+    setStatus(`Auto-created ${newTerrains.length} terrain(s) @${unit}px: ${newTerrains.map((t) => t.name).join(", ")} — Fill the base, then paint the rest`);
     renderSidebar();
     renderInspector();
     vp.render();
