@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "asset-forge/sprite-frames@1",
+  "title": "Asset Forge sprite frames manifest",
+  "description": "Describes a packed, anchor-aligned sprite sheet. Frame indices are row-major over a uniform grid of frameWidth×frameHeight cells; animations reference those indices.",
+  "type": "object",
+  "required": ["schema", "name", "image", "frameWidth", "frameHeight", "columns", "rows", "frameCount", "animations"],
+  "properties": {
+    "schema": { "const": "asset-forge/sprite-frames@1" },
+    "name": { "type": "string" },
+    "image": { "type": "string", "description": "Filename of the sheet PNG (same folder)." },
+    "frameWidth": { "type": "integer", "minimum": 1 },
+    "frameHeight": { "type": "integer", "minimum": 1 },
+    "columns": { "type": "integer", "minimum": 1 },
+    "rows": { "type": "integer", "minimum": 1 },
+    "frameCount": { "type": "integer", "minimum": 0 },
+    "anchor": {
+      "type": "object",
+      "description": "Normalised origin (0..1) the frames were aligned to. (0.5,1.0)=feet-center.",
+      "required": ["x", "y"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "directions": {
+      "type": "array",
+      "description": "Convention hint; top-down order is up,right,down,left.",
+      "items": { "enum": ["up", "right", "down", "left"] }
+    },
+    "animations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["frames", "frameRate", "loop"],
+        "properties": {
+          "frames": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+          "frameRate": { "type": "number", "minimum": 1 },
+          "loop": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,212 @@
+// Central data model for Asset Forge.
+//
+// Two layers live here:
+//   1. The in-app *document* model (what the editors mutate, what gets saved
+//      to a project file). Optimised for editing.
+//   2. The exported *manifest* model (the portable JSON written next to the
+//      generated PNGs). Optimised for any engine to consume. Export functions
+//      transform documents into manifests; the two are intentionally separate
+//      so the editing model can evolve without breaking exported assets.
+
+export const DIRECTIONS = ["up", "right", "down", "left"] as const;
+export type Direction = (typeof DIRECTIONS)[number];
+
+/** A loaded source image. Pixels live in IndexedDB (see core/store); the
+ * document only keeps metadata + the id used to fetch the bitmap. */
+export interface SourceImage {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+}
+
+/** Magenta chroma-key settings, ported from the tib runtime convention
+ * (bright magenta backgrounds keyed to transparent). Tolerance widens the
+ * match so near-magenta anti-aliased edges also drop out. */
+export interface ChromaSettings {
+  enabled: boolean;
+  /** 0..255 — how far a pixel may stray from pure magenta and still key out. */
+  tolerance: number;
+}
+
+export function defaultChroma(): ChromaSettings {
+  return { enabled: true, tolerance: 60 };
+}
+
+// ---------------------------------------------------------------------------
+// Sprite documents
+// ---------------------------------------------------------------------------
+
+/** A single sub-rectangle in source-image pixel space. */
+export interface FrameBox {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** One row of an animation — a direction (or "all" for non-directional) plus
+ * the ordered frames that play for it. */
+export interface ClipRow {
+  dir: Direction | "all";
+  frames: string[]; // FrameBox ids
+}
+
+export interface AnimationClip {
+  id: string;
+  name: string; // e.g. "walk", "attack"
+  fps: number;
+  loop: boolean;
+  rows: ClipRow[];
+}
+
+export interface SpriteDoc {
+  id: string;
+  name: string;
+  sourceId: string | null;
+  chroma: ChromaSettings;
+  /** Origin used when aligning frames into the packed sheet. Feet-center
+   * (0.5, 1.0) is the top-down convention; head/center sprites use (0.5,0.5). */
+  anchor: { x: number; y: number };
+  /** Trim transparent margins per frame before packing/aligning. */
+  trim: boolean;
+  frames: FrameBox[];
+  clips: AnimationClip[];
+}
+
+// ---------------------------------------------------------------------------
+// Tileset documents
+// ---------------------------------------------------------------------------
+
+export interface TileDef {
+  id: string; // stable id within the tileset
+  /** Optional single-character code for ascii-style stage export. */
+  char: string;
+  name: string;
+  /** Source rectangle in the tilesheet. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  blocked: boolean; // blocks movement
+  sightBlocked: boolean; // blocks line of sight / projectiles
+  tags: string[];
+}
+
+export interface TilesetDoc {
+  id: string;
+  name: string;
+  sourceId: string | null;
+  chroma: ChromaSettings;
+  /** Output tile edge in px (every tile is normalised to this in the atlas). */
+  tileSize: number;
+  /** Grid the slicer used to seed tiles (kept so it can be re-sliced). */
+  grid: { offsetX: number; offsetY: number; cols: number; rows: number; cellW: number; cellH: number; spacing: number; inset: number };
+  tiles: TileDef[];
+}
+
+// ---------------------------------------------------------------------------
+// Stage documents
+// ---------------------------------------------------------------------------
+
+export interface PlacedObject {
+  id: string;
+  /** Reference into a sprite doc clip frame, or a free label. */
+  key: string;
+  x: number; // tile coords
+  y: number;
+  w: number; // tile span
+  h: number;
+  blocking: boolean;
+}
+
+export interface StageLayer {
+  id: string;
+  name: string;
+  visible: boolean;
+  /** Grid of tile refs. Empty cell = null. A ref is "<tilesetId>/<tileId>". */
+  data: (string | null)[][];
+}
+
+export interface StageDoc {
+  id: string;
+  name: string;
+  tileSize: number;
+  cols: number;
+  rows: number;
+  layers: StageLayer[];
+  /** Explicit collision grid (true = blocked). Auto-seeded from tile flags,
+   * manually overridable. */
+  collision: boolean[][];
+  objects: PlacedObject[];
+}
+
+// ---------------------------------------------------------------------------
+// Project (the unit of save/load)
+// ---------------------------------------------------------------------------
+
+export const PROJECT_VERSION = 1;
+
+export interface Project {
+  version: number;
+  name: string;
+  sources: SourceImage[];
+  sprites: SpriteDoc[];
+  tilesets: TilesetDoc[];
+  stages: StageDoc[];
+}
+
+export function emptyProject(name = "Untitled"): Project {
+  return { version: PROJECT_VERSION, name, sources: [], sprites: [], tilesets: [], stages: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Exported manifest schemas (the portable, engine-agnostic contract)
+// ---------------------------------------------------------------------------
+
+export interface SpriteManifest {
+  schema: "asset-forge/sprite-frames@1";
+  name: string;
+  image: string;
+  frameWidth: number;
+  frameHeight: number;
+  columns: number;
+  rows: number;
+  frameCount: number;
+  anchor: { x: number; y: number };
+  directions: Direction[];
+  animations: Record<string, { frames: number[]; frameRate: number; loop: boolean }>;
+}
+
+export interface TilesetManifest {
+  schema: "asset-forge/tileset@1";
+  name: string;
+  image: string;
+  tileSize: number;
+  columns: number;
+  rows: number;
+  tiles: Array<{
+    index: number;
+    id: string;
+    char: string;
+    name: string;
+    blocked: boolean;
+    sightBlocked: boolean;
+    tags: string[];
+  }>;
+}
+
+export interface StageManifest {
+  schema: "asset-forge/stage@1";
+  name: string;
+  tileSize: number;
+  cols: number;
+  rows: number;
+  tilesets: Array<{ id: string; name: string; image: string; manifest: string }>;
+  layers: Array<{ name: string; type: "tile"; data: (string | null)[][] }>;
+  collision: number[][];
+  objects: Array<{ key: string; x: number; y: number; w: number; h: number; blocking: boolean }>;
+  /** Convenience ascii rendering: one char per ground-layer cell + legend. */
+  ascii?: { legend: Record<string, string>; rows: string[] };
+}

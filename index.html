@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Asset Forge</title>
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <div class="brand">
+          <span class="brand-mark">⚒</span>
+          <span class="brand-name">Asset Forge</span>
+        </div>
+        <nav id="tabs" class="tabs"></nav>
+        <div class="topbar-actions">
+          <button id="btn-save-project" class="btn" title="Download the whole project as one .afproj.json file">Save project</button>
+          <button id="btn-load-project" class="btn" title="Open a previously saved .afproj.json file">Open project</button>
+          <span id="autosave-status" class="autosave"></span>
+        </div>
+      </header>
+      <main id="view"></main>
+      <footer id="statusbar"><span id="status-text">Ready.</span></footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "asset-forge/tileset@1",
+  "title": "Asset Forge tileset manifest",
+  "description": "A normalised tile atlas (every tile resized to tileSize) plus per-tile collision metadata. Tile index is row-major over columns×rows.",
+  "type": "object",
+  "required": ["schema", "name", "image", "tileSize", "columns", "rows", "tiles"],
+  "properties": {
+    "schema": { "const": "asset-forge/tileset@1" },
+    "name": { "type": "string" },
+    "image": { "type": "string" },
+    "tileSize": { "type": "integer", "minimum": 1 },
+    "columns": { "type": "integer", "minimum": 1 },
+    "rows": { "type": "integer", "minimum": 1 },
+    "tiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "id", "name", "blocked", "sightBlocked"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0, "description": "Position in the atlas, row-major." },
+          "id": { "type": "string", "description": "Stable id within the tileset." },
+          "char": { "type": "string", "maxLength": 1, "description": "Optional single-char code for ascii stage maps." },
+          "name": { "type": "string" },
+          "blocked": { "type": "boolean", "description": "Blocks movement." },
+          "sightBlocked": { "type": "boolean", "description": "Blocks line of sight / projectiles." },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

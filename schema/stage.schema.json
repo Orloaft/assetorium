@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "asset-forge/stage@1",
+  "title": "Asset Forge stage manifest",
+  "description": "A tile-based stage/map: one or more tile layers, an explicit collision grid, free-placed objects, and an optional ascii rendering. Tile refs are \"<tilesetName>:<index>\" matching each referenced tileset manifest; null = empty cell.",
+  "type": "object",
+  "required": ["schema", "name", "tileSize", "cols", "rows", "tilesets", "layers", "collision", "objects"],
+  "properties": {
+    "schema": { "const": "asset-forge/stage@1" },
+    "name": { "type": "string" },
+    "tileSize": { "type": "integer", "minimum": 1 },
+    "cols": { "type": "integer", "minimum": 1 },
+    "rows": { "type": "integer", "minimum": 1 },
+    "tilesets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "image", "manifest"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "image": { "type": "string", "description": "Bundled tileset PNG filename." },
+          "manifest": { "type": "string", "description": "Bundled tileset JSON filename." }
+        }
+      }
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "data"],
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "const": "tile" },
+          "data": {
+            "type": "array",
+            "description": "rows[y][x] = \"<tilesetName>:<index>\" or null.",
+            "items": { "type": "array", "items": { "type": ["string", "null"] } }
+          }
+        }
+      }
+    },
+    "collision": {
+      "type": "array",
+      "description": "collision[y][x] = 1 blocked, 0 free.",
+      "items": { "type": "array", "items": { "enum": [0, 1] } }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "x", "y", "w", "h", "blocking"],
+        "properties": {
+          "key": { "type": "string" },
+          "x": { "type": "number" },
+          "y": { "type": "number" },
+          "w": { "type": "number" },
+          "h": { "type": "number" },
+          "blocking": { "type": "boolean" }
+        }
+      }
+    },
+    "ascii": {
+      "type": "object",
+      "description": "Convenience rendering of the first tile layer.",
+      "properties": {
+        "legend": { "type": "object", "additionalProperties": { "type": "string" } },
+        "rows": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
