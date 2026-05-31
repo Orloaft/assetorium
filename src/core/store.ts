@@ -74,6 +74,14 @@ export function mutate(fn: (p: Project) => void): void {
   emit();
 }
 
+/** Apply a mutation and persist, but do NOT notify subscribers — for
+ * high-frequency edits (painting) where the editor redraws its own canvas and a
+ * full re-render/re-fit would be wasteful and reset the viewport. */
+export function mutateSilent(fn: (p: Project) => void): void {
+  fn(state.project);
+  scheduleAutosave();
+}
+
 /** Replace the whole project (load). */
 export function setProject(p: Project): void {
   state.project = p;

@@ -1,6 +1,6 @@
 import type { Editor } from "../main";
 import { el, button, numberField, textField, checkbox, clear } from "../core/dom";
-import { getProject, mutate, setStatus, slug } from "../core/store";
+import { getProject, mutate, mutateSilent, setStatus, slug } from "../core/store";
 import { getKeyedCanvas, uid, cropCanvas, newCanvas, ctx2d, canvasToBlob } from "../core/image";
 import { Viewport } from "../core/viewport";
 import type { StageDoc, StageLayer, PlacedObject } from "../core/types";
@@ -147,7 +147,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
     }
     if (L.tool === "collision") {
       if (isDown) L.collisionPaintValue = !d.collision[c.y][c.x];
-      mutate(() => { for (const p of brushCells(d, c.x, c.y)) d.collision[p.y][p.x] = L.collisionPaintValue; });
+      mutateSilent(() => { for (const p of brushCells(d, c.x, c.y)) d.collision[p.y][p.x] = L.collisionPaintValue; });
       vp.render();
       return;
     }
@@ -156,7 +156,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
       ensureTerrainGrid(layer, d);
       const cells = brushCells(d, c.x, c.y);
       let changed = false;
-      mutate(() => { for (const p of cells) if (layer.terrain![p.y][p.x] !== L.activeTerrainId) { layer.terrain![p.y][p.x] = L.activeTerrainId; changed = true; } });
+      mutateSilent(() => { for (const p of cells) if (layer.terrain![p.y][p.x] !== L.activeTerrainId) { layer.terrain![p.y][p.x] = L.activeTerrainId; changed = true; } });
       if (changed) { resolveSet(d, layer, cells); vp.render(); }
       return;
     }
@@ -166,7 +166,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
     }
     // paint / erase (drag-and-drop placement), brush-aware
     if (!layer) return;
-    mutate(() => {
+    mutateSilent(() => {
       for (const p of brushCells(d, c.x, c.y)) {
         const ref = L.tool === "erase" ? null : pickRef();
         layer.data[p.y][p.x] = ref;
@@ -192,7 +192,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const layer = d.layers[L.activeLayer];
     const x0 = Math.min(L.rectStart.x, c.x), x1 = Math.max(L.rectStart.x, c.x);
     const y0 = Math.min(L.rectStart.y, c.y), y1 = Math.max(L.rectStart.y, c.y);
-    mutate(() => {
+    mutateSilent(() => {
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) layer.data[y][x] = pickRef();
     });
     L.rectStart = null;
@@ -205,7 +205,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const stack = [[x, y]];
     const seen = new Set<number>(); // visited cells, so scatter (which may re-pick
     // the target value) can't cause reprocessing / infinite loops
-    mutate(() => {
+    mutateSilent(() => {
       while (stack.length) {
         const [cx, cy] = stack.pop()!;
         if (cx < 0 || cy < 0 || cx >= cols || cy >= layer.data.length) continue;
@@ -245,7 +245,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const terrains = getProject().terrains;
     const rank = terrainRank();
     const seen = new Set<number>();
-    mutate(() => {
+    mutateSilent(() => {
       for (const cell of cells) {
         for (let dy = -1; dy <= 1; dy++) {
           for (let dx = -1; dx <= 1; dx++) {
@@ -500,9 +500,9 @@ export function mountStageEditor(root: HTMLElement): Editor {
   function deleteStage(id: string): void {
     mutate((p) => (p.stages = p.stages.filter((s) => s.id !== id)));
     if (L.stageId === id) L.stageId = getProject().stages[0]?.id ?? null;
-    refreshAll();
+    reloadAll(); fitView();
   }
-  function selectStage(id: string): void { L.stageId = id; L.activeLayer = 0; refreshAll(); }
+  function selectStage(id: string): void { L.stageId = id; L.activeLayer = 0; reloadAll(); fitView(); }
 
   function resizeStage(d: StageDoc, cols: number, rows: number): void {
     mutate(() => {
@@ -1131,22 +1131,19 @@ export function mountStageEditor(root: HTMLElement): Editor {
   }
 
   function refreshCanvasInspector(): void { renderInspector(); renderSidebar(); vp.render(); }
-  function refreshAll(): void {
-    ensureTileImages().then(() => {
-      renderSidebar();
-      renderInspector();
-      const d = doc();
-      if (d) vp.fit(d.cols * d.tileSize, d.rows * d.tileSize);
-      else vp.render();
-    });
+  function fitView(): void { const d = doc(); if (d) vp.fit(d.cols * d.tileSize, d.rows * d.tileSize); else vp.render(); }
+  /** Reload tile art + re-render UI, PRESERVING the current zoom/pan (no fit). */
+  function reloadAll(): void {
+    ensureTileImages().then(() => { renderSidebar(); renderInspector(); vp.render(); });
   }
 
-  refreshAll();
+  reloadAll();
+  fitView(); // fit only on initial mount
 
   return {
     refresh: () => {
       if (!getProject().stages.some((s) => s.id === L.stageId)) L.stageId = getProject().stages[0]?.id ?? null;
-      refreshAll();
+      reloadAll(); // never re-fit on routine refreshes (would reset the user's zoom)
     },
     unmount: () => { vp.destroy(); root.replaceChildren(); }
   };
