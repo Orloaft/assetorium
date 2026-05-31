@@ -10,7 +10,7 @@ import { downloadBlob } from "../core/download";
 import { packTileset } from "../tile/tile-pack";
 import { resolveCell, EDGE16_SLOTS, maskGlyph } from "./autotile";
 import { generateTransitionSheet } from "./transition-gen";
-import { classifyTile, tileCenter } from "./classify";
+import { classifyTileBlob, tileCenter } from "./classify";
 import { importSourceDataUrl } from "../core/image";
 import type { Terrain, TilesetDoc, TileDef } from "../core/types";
 
@@ -509,7 +509,11 @@ export function mountStageEditor(root: HTMLElement): Editor {
       el("div.btn-row", {}, button("🧩 Auto-build from sheet", () => autoBuildTerrain(), L.transFill && L.transBase ? "primary" : "")));
 
     const terrain = project.terrains.find((t) => t.id === L.activeTerrainId);
-    if (terrain) {
+    if (terrain && terrain.kind === "blob47") {
+      sec.append(el("div.hint", { style: { margin: "6px 0" } },
+        `Auto-built terrain (inner corners): ${Object.keys(terrain.roles).length} configurations from the sheet. Paint with the terrain tool. Re-run auto-build to rebuild.`));
+    }
+    if (terrain && terrain.kind === "edge16") {
       sec.append(el("div.hint", { style: { margin: "6px 0" } },
         "Click a palette tile, then click a slot below to assign it to that edge pattern. Then use the terrain tool to paint — borders & corners resolve automatically. Right-click a slot to clear."));
       const grid = el("div.palette");
@@ -613,18 +617,18 @@ export function mountStageEditor(root: HTMLElement): Editor {
       const ref = `${tsId}/${tile.id}`;
       const img = L.tileImg.get(ref);
       if (!img) continue;
-      const cl = classifyTile(img, primary, secondary);
+      const cl = classifyTileBlob(img, primary, secondary);
       if (!cl || !cl.centerPrimary) continue; // only tiles whose body is the primary terrain
       scanned++;
-      if (!filled.has(cl.mask)) { roles[cl.mask] = ref; filled.add(cl.mask); }
+      if (!filled.has(cl.key)) { roles[cl.key] = ref; filled.add(cl.key); }
     }
-    if (!roles[15]) roles[15] = L.transFill; // ensure a solid centre
+    if (!roles[255]) roles[255] = L.transFill; // fully-surrounded centre fallback
     const name = `${L.transFill.split("/")[1]}-terrain`;
-    const terrain: Terrain = { id: uid("terr"), name, tilesetId: tsId, kind: "edge16", roles };
+    const terrain: Terrain = { id: uid("terr"), name, tilesetId: tsId, kind: "blob47", roles };
     mutate((p) => p.terrains.push(terrain));
     L.activeTerrainId = terrain.id;
     L.tool = "terrain";
-    setStatus(`Auto-built "${name}": ${Object.keys(roles).length}/16 edge roles from ${scanned} primary tiles`);
+    setStatus(`Auto-built "${name}" (blob47): ${Object.keys(roles).length} configurations from ${scanned} primary tiles`);
     refreshCanvasInspector();
   }
 

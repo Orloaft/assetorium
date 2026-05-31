@@ -9,6 +9,8 @@
 import type { Terrain } from "../core/types";
 
 export const N = 1, E = 2, S = 4, W = 8;
+// Diagonal bits for blob47.
+export const NE = 16, SE = 32, SW = 64, NW = 128;
 
 /** A grid of terrainId|null. */
 export type TerrainGrid = (string | null)[][];
@@ -27,6 +29,28 @@ export function edgeMask(grid: TerrainGrid, x: number, y: number, id: string, co
   return m;
 }
 
+/** Canonical blob-47 key: 4 orthogonal bits, plus a diagonal bit only when both
+ * its adjacent orthogonals are also set (so a corner only "rounds" when the
+ * edges around it are filled). Collapses the 256 raw 8-neighbour combos to the
+ * 47 meaningful ones. Used for both resolution and edge classification, so they
+ * always agree. */
+export function blobKeyFromBits(
+  n: boolean, e: boolean, s: boolean, w: boolean,
+  ne: boolean, se: boolean, sw: boolean, nw: boolean
+): number {
+  let k = (n ? N : 0) | (e ? E : 0) | (s ? S : 0) | (w ? W : 0);
+  if (n && e && ne) k |= NE;
+  if (s && e && se) k |= SE;
+  if (s && w && sw) k |= SW;
+  if (n && w && nw) k |= NW;
+  return k;
+}
+
+export function blobKey(grid: TerrainGrid, x: number, y: number, id: string, cols: number, rows: number): number {
+  const sm = (dx: number, dy: number): boolean => same(grid, x + dx, y + dy, id, cols, rows);
+  return blobKeyFromBits(sm(0, -1), sm(1, 0), sm(0, 1), sm(-1, 0), sm(1, -1), sm(1, 1), sm(-1, 1), sm(-1, -1));
+}
+
 /** Resolve the tile ref for cell (x,y) given the terrain membership grid.
  * Returns null if the cell isn't this terrain or no role is assigned. */
 export function resolveCell(
@@ -38,9 +62,22 @@ export function resolveCell(
   rows: number
 ): string | null {
   if (grid[y]?.[x] !== terrain.id) return null;
-  const mask = terrain.kind === "edge16" ? edgeMask(grid, x, y, terrain.id, cols, rows) : edgeMask(grid, x, y, terrain.id, cols, rows);
-  // Fall back to the fully-surrounded ("center", mask 15) tile, then any role.
-  return terrain.roles[mask] ?? terrain.roles[15] ?? Object.values(terrain.roles)[0] ?? null;
+  if (terrain.kind === "edge16") {
+    const mask = edgeMask(grid, x, y, terrain.id, cols, rows);
+    return terrain.roles[mask] ?? terrain.roles[15] ?? Object.values(terrain.roles)[0] ?? null;
+  }
+  // blob47: try the full key, then the same key with corners stripped (degrade
+  // to the edge-only case), then the fully-surrounded centre, then anything.
+  const key = blobKey(grid, x, y, terrain.id, cols, rows);
+  const ortho = key & 15;
+  return (
+    terrain.roles[key] ??
+    terrain.roles[ortho] ??
+    terrain.roles[15 | NE | SE | SW | NW] ??
+    terrain.roles[15] ??
+    Object.values(terrain.roles)[0] ??
+    null
+  );
 }
 
 /** The 16 edge masks in a human-friendly order for the assignment UI, each with

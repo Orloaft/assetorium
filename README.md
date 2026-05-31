@@ -190,12 +190,15 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
    edge/corner tile from its neighbours, so grass↔dirt↔water borders resolve
    themselves. Resolved tiles land in the normal tile layer, so export is
    unchanged. (Current model: `edge16` — straight edges + outer corners.)
-   - **Auto-build from sheet** — if the sheet already contains edge/corner
-     transition tiles: **Set fill** = the primary terrain tile, **Set base** =
-     the other, then **🧩 Auto-build from sheet**. The tool classifies every
-     tile's edges by colour similarity to the two fills, works out which tile is
-     which edge/corner, and assigns the 16 roles for you — no manual slots.
-     (Use Inset 0 for these so the transition edges aren't trimmed.)
+   - **Auto-build from sheet (blob-47, inner corners)** — if the sheet already
+     contains edge/corner transition tiles: **Set fill** = the primary terrain
+     tile, **Set base** = the other, then **🧩 Auto-build from sheet**. The tool
+     classifies every tile's centre, 4 edges *and* 4 corners by colour
+     similarity to the two fills, derives the **blob-47** configuration each tile
+     represents (the 47 canonical edge+corner cases, incl. inner-corner notches),
+     and assigns them all — no manual slots. (Use Inset 0 so transition edges
+     aren't trimmed.) Missing configs fall back to the edge-only case, then the
+     centre tile.
    - **Synthesized transitions** — for sheets with only *full-fill* tiles (no
      edge/corner art): select a tile and **Set fill**, select another and
      **Set base**, then **✨ Generate transition**. It blends fill over base with

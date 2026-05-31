@@ -6,7 +6,7 @@
 // slot assignment.
 
 import { ctx2d } from "../core/image";
-import { N, E, S, W } from "./autotile";
+import { N, E, S, W, blobKeyFromBits } from "./autotile";
 
 export type RGB = [number, number, number];
 
@@ -54,4 +54,28 @@ export function classifyTile(
   let mask = 0;
   for (const e of edges) if (isPrimary(e.col)) mask |= e.bit;
   return { mask, centerPrimary: isPrimary(center) };
+}
+
+/** Classify a tile into a blob-47 key by sampling 4 edges + 4 corners. A corner
+ * reads as "diagonal present" when its small corner patch is primary; the
+ * canonical key gates corners on their edges, matching paint-time resolution. */
+export function classifyTileBlob(
+  c: HTMLCanvasElement,
+  primary: RGB,
+  secondary: RGB
+): { key: number; centerPrimary: boolean } | null {
+  const w = c.width, h = c.height;
+  const center = tileCenter(c);
+  if (!center) return null;
+  const isP = (col: RGB | null): boolean => (col ? dist2(col, primary) <= dist2(col, secondary) : false);
+  const cw = w * 0.16, ch = h * 0.16;
+  const n = isP(avgColor(c, w * 0.3, 0, w * 0.4, ch));
+  const s = isP(avgColor(c, w * 0.3, h - ch, w * 0.4, ch));
+  const wEdge = isP(avgColor(c, 0, h * 0.3, cw, h * 0.4));
+  const e = isP(avgColor(c, w - cw, h * 0.3, cw, h * 0.4));
+  const nw = isP(avgColor(c, 0, 0, cw, ch));
+  const ne = isP(avgColor(c, w - cw, 0, cw, ch));
+  const sw = isP(avgColor(c, 0, h - ch, cw, ch));
+  const se = isP(avgColor(c, w - cw, h - ch, cw, ch));
+  return { key: blobKeyFromBits(n, e, s, wEdge, ne, se, sw, nw), centerPrimary: isP(center) };
 }

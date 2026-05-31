@@ -71,6 +71,6 @@ const colCb = page.locator('label.check:has-text("Show collision") input'); if (
 await page.waitForTimeout(150);
 await page.mouse.move(cx, cy); for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, -120); await page.waitForTimeout(40); }
 await page.waitForTimeout(200);
-await page.screenshot({ path: `${SHOT}/07-autobuild.png` });
+await page.screenshot({ path: `${SHOT}/08-blob47.png` });
 await browser.close();
 console.log(errors.length ? "ERRORS:\n" + errors.join("\n") : "no errors");
