@@ -2,7 +2,8 @@ import type { Editor } from "../main";
 import { el, button, numberField, textField, checkbox, clear } from "../core/dom";
 import { getProject, mutate, setStatus, slug } from "../core/store";
 import { sourcePicker } from "../core/sources";
-import { getKeyedCanvas, uid, cropCanvas, canvasToBlob, alphaBounds } from "../core/image";
+import { getKeyedCanvas, uid, cropCanvas, canvasToBlob, alphaBounds, importSourceFromUrl } from "../core/image";
+import { LIBRARY, libraryUrl } from "../core/library";
 import { Viewport } from "../core/viewport";
 import { defaultChroma } from "../core/types";
 import type { TilesetDoc, TileDef } from "../core/types";
@@ -88,6 +89,26 @@ export function mountTileStudio(root: HTMLElement): Editor {
   // ---- Sidebar -----------------------------------------------------------
   function renderSidebar(): void {
     clear(sidebar);
+
+    // Built-in library: pick a biome/structure and it loads + slices, no import.
+    const libSel = el("select", {
+      onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; if (v) addFromLibrary(v); (e.target as HTMLSelectElement).selectedIndex = 0; }
+    });
+    libSel.append(el("option", { value: "" }, "📚 Add from library…"));
+    for (const cat of ["biome", "structure"] as const) {
+      const group = document.createElement("optgroup");
+      group.label = cat === "biome" ? "Biomes" : "Structures";
+      for (const e of LIBRARY.filter((x) => x.category === cat)) {
+        const o = document.createElement("option");
+        o.value = e.file;
+        o.textContent = e.note ? `${e.name} — ${e.note}` : e.name;
+        group.append(o);
+      }
+      libSel.append(group);
+    }
+    sidebar.append(el("div.section", {}, el("h3", {}, "Built-in library"), libSel,
+      el("div.hint", {}, "Loads a curated sheet and auto-slices it — ready to build terrains in the Stage Editor.")));
+
     sidebar.append(sourcePicker(doc()?.sourceId ?? null, (id) => bindSource(id)));
     const list = el("div.list");
     for (const t of getProject().tilesets) {
@@ -113,6 +134,35 @@ export function mountTileStudio(root: HTMLElement): Editor {
     };
     mutate((p) => p.tilesets.push(d));
     selectTileset(d.id);
+  }
+
+  async function addFromLibrary(file: string): Promise<void> {
+    const entry = LIBRARY.find((e) => e.file === file);
+    if (!entry) return;
+    if (getProject().tilesets.some((t) => t.name === entry.name)) { setStatus(`"${entry.name}" already added`); return; }
+    setStatus(`Loading ${entry.name}…`);
+    try {
+      const src = await importSourceFromUrl(libraryUrl(file), entry.name);
+      const d: TilesetDoc = {
+        id: uid("ts"),
+        name: entry.name,
+        sourceId: src.id,
+        chroma: defaultChroma(),
+        tileSize: 64,
+        // Inset 0: biome sheets carry real edge/corner tiles — don't trim them.
+        grid: { offsetX: 0, offsetY: 0, cols: 8, rows: 8, cellW: 64, cellH: 64, spacing: 0, inset: 0 },
+        tiles: []
+      };
+      mutate((p) => { p.sources.push(src); p.tilesets.push(d); });
+      L.tilesetId = d.id;
+      L.selectedTileId = null;
+      await reloadKeyed();
+      autoDetectTiles();
+      setStatus(`Added "${entry.name}" — ${doc()?.tiles.length ?? 0} tiles. In Stage Editor: ✨ Auto-create terrains.`);
+    } catch (e) {
+      setStatus(`Failed to load ${entry.name}`);
+      console.error(e);
+    }
   }
 
   function deleteTileset(id: string): void {

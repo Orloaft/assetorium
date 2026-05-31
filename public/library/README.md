@@ -4,7 +4,7 @@ Source tile sheets for building worlds in Asset Forge. Import a sheet in **Tile
 Studio**, slice it (auto-detect / grid), then build terrains + paint stages in
 the **Stage Editor**. All sheets use a **magenta `#FF00FF`** background that the
 tool keys out. To add or fill gaps, see
-[`../docs/asset-generation-guide.md`](../docs/asset-generation-guide.md).
+[`../../docs/asset-generation-guide.md`](../../docs/asset-generation-guide.md).
 
 ## biomes/
 
@@ -45,7 +45,7 @@ tiles, not biome terrain):
 | `crypt-dungeon.png` | dungeon/crypt floors, walls, doors, dungeon props |
 
 ## Gaps / wishlist
-See [`../docs/asset-generation-guide.md`](../docs/asset-generation-guide.md) §5
+See [`../../docs/asset-generation-guide.md`](../../docs/asset-generation-guide.md) §5
 — recommended new sheets (grassland/plains, volcanic/ashlands, farmland, ocean,
 cavern floor, universal cross-biome transition strip, unified road/bridge set)
 and the exact layout specs to make new art autotile-ready.

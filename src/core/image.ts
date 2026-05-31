@@ -55,6 +55,16 @@ export async function importSourceFile(file: File): Promise<SourceImage> {
   return { id, name: file.name.replace(/\.[^.]+$/, ""), width: img.naturalWidth, height: img.naturalHeight };
 }
 
+/** Import a source from a URL (used by the built-in library). */
+export async function importSourceFromUrl(url: string, name: string): Promise<SourceImage> {
+  const blob = await (await fetch(url)).blob();
+  const id = uid("src");
+  const img = await blobToImage(blob);
+  bitmapCache.set(id, img);
+  await idbPut(id, blob);
+  return { id, name, width: img.naturalWidth, height: img.naturalHeight };
+}
+
 /** Import from a base64 data URL (used when loading a saved project file). */
 export async function importSourceDataUrl(id: string, name: string, dataUrl: string): Promise<SourceImage> {
   const blob = await (await fetch(dataUrl)).blob();

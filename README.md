@@ -142,8 +142,16 @@ Turn a character/enemy sheet into an anchor-aligned animation sheet + manifest.
 
 Slice a tilesheet into a normalised atlas with per-tile collision metadata.
 
-### Workflow
-1. **Import** a tilesheet, **+ New tileset** (binds the image).
+> **Fastest start: the built-in library.** The sidebar's **📚 Add from library…**
+> dropdown ships ~19 curated biome + structure sheets (highland, beach, swamp,
+> snow, desert, jungle, town, graveyard, …). Pick one and it loads + auto-slices
+> instantly — no importing. Then in the Stage Editor click **✨ Auto-create
+> terrains** and paint. (Sheets live in `public/library/`, catalogued in
+> [`public/library/README.md`](public/library/README.md).)
+
+### Workflow (custom sheets)
+1. **Import** a tilesheet, **+ New tileset** (binds the image) — or just use the
+   built-in library above.
 2. **Remove the background** (Tolerance + Fringe — tilesheets especially benefit
    from Fringe cleanup + a small Inset; see
    [above](#background-removal--tolerance-vs-fringe-vs-inset)).
