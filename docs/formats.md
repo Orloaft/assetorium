@@ -146,5 +146,18 @@ for (const layer of stage.layers) {
 
 All three studios key out magenta backgrounds before slicing, using the same
 heuristic as the tib runtime (bright magenta plus the dark red-leaning purple
-gradient case), with a tolerance slider for anti-aliased edges. Exports are
-already keyed — the PNGs ship with a transparent background.
+gradient case). Two controls:
+
+- **Tolerance** — widens the match around *bright* magenta for anti-aliased
+  edges (a distance-from-`(255,0,255)` test).
+- **Fringe cleanup** — a *hue-based* pass that catches the **dark** anti-aliased
+  magenta/purple edge pixels (where red & blue both exceed green) that a
+  brightness test can't reach. Strongly magenta-cast pixels become transparent;
+  milder casts are despilled (the pink/purple tint is removed so edges don't
+  leave a coloured halo). Raise it if remnants linger; lower it toward 0 if real
+  art starts to erode.
+
+For tilesheets, the per-tile **inset** (Tile Studio slice grid) also trims a
+border off each cell, removing any bleed right at the tile boundary.
+
+Exports are already keyed — the PNGs ship with a transparent background.

@@ -138,10 +138,17 @@ export function mountTileStudio(root: HTMLElement): Editor {
       el("input", { type: "range", min: 0, max: 180, value: String(d.chroma.tolerance),
         oninput: (e: Event) => { mutate(() => (d.chroma.tolerance = Number((e.target as HTMLInputElement).value))); reloadKeyed().then(() => vp.render()); } }),
       el("span.tag", {}, String(d.chroma.tolerance)));
+    const fringe = d.chroma.fringe ?? 24;
+    const fringeRow = el("div.range-row", {},
+      el("input", { type: "range", min: 0, max: 120, value: String(fringe),
+        oninput: (e: Event) => { mutate(() => (d.chroma.fringe = Number((e.target as HTMLInputElement).value))); reloadKeyed().then(() => { vp.render(); renderInspector(); }); } }),
+      el("span.tag", {}, String(fringe)));
     inspector.append(el("div.section", {},
       el("h3", {}, "Background removal (magenta)"),
       checkbox("Key out magenta", d.chroma.enabled, (b) => { mutate(() => (d.chroma.enabled = b)); reloadKeyed().then(() => vp.render()); }),
-      el("div.field", {}, el("span.field-label", {}, "Tolerance"), tolRow)));
+      el("div.field", {}, el("span.field-label", {}, "Tolerance"), tolRow),
+      el("div.field", {}, el("span.field-label", {}, "Fringe cleanup"), fringeRow),
+      el("div.hint", {}, "Tolerance removes bright magenta. Fringe cleanup removes dark anti-aliased magenta edge pixels (hue-based) — raise it if pink/purple remnants linger; lower it if real art starts disappearing.")));
 
     const G = d.grid;
     inspector.append(el("div.section", {},

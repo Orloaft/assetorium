@@ -26,16 +26,40 @@ export function isMagenta(r: number, g: number, b: number, tolerance: number): b
   return magentaDistance(r, g, b) <= tolerance * 1.8;
 }
 
-/** Key magenta to transparent, in place, on an ImageData buffer. */
-export function chromaKeyImageData(image: ImageData, tolerance: number): void {
+/** The "magenta cast" of a pixel: how much red & blue jointly exceed green.
+ * Positive => magenta-leaning, regardless of brightness. This is what catches
+ * dark anti-aliased fringe that a distance-from-bright-magenta test misses. */
+export function magentaCast(r: number, g: number, b: number): number {
+  return Math.min(r, b) - g;
+}
+
+/** Key magenta to transparent, in place. With `fringe > 0`, also clean up the
+ * hue-based anti-alias fringe: strongly magenta-cast pixels go transparent,
+ * milder casts are despilled (red & blue pulled down to green so the edge
+ * loses its pink/purple tint instead of leaving a coloured halo). */
+export function chromaKeyImageData(image: ImageData, tolerance: number, fringe = 0): void {
   const d = image.data;
   for (let i = 0; i < d.length; i += 4) {
-    if (isMagenta(d[i], d[i + 1], d[i + 2], tolerance)) d[i + 3] = 0;
+    if (d[i + 3] === 0) continue;
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (isMagenta(r, g, b, tolerance)) {
+      d[i + 3] = 0;
+      continue;
+    }
+    if (fringe > 0) {
+      const cast = magentaCast(r, g, b);
+      if (cast > fringe) {
+        d[i + 3] = 0;
+      } else if (cast > 0) {
+        d[i] = r - cast; // neutralise the magenta tint
+        d[i + 2] = b - cast;
+      }
+    }
   }
 }
 
-export function chromaKeyCanvas(ctx: CanvasRenderingContext2D, w: number, h: number, tolerance: number): void {
+export function chromaKeyCanvas(ctx: CanvasRenderingContext2D, w: number, h: number, tolerance: number, fringe = 0): void {
   const image = ctx.getImageData(0, 0, w, h);
-  chromaKeyImageData(image, tolerance);
+  chromaKeyImageData(image, tolerance, fringe);
   ctx.putImageData(image, 0, 0);
 }

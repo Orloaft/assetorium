@@ -93,14 +93,15 @@ export async function deleteSource(id: string): Promise<void> {
 
 /** A full-image canvas with chroma applied (or not), cached per tolerance. */
 export async function getKeyedCanvas(id: string, chroma: ChromaSettings): Promise<HTMLCanvasElement> {
-  const key = chroma.enabled ? `${id}:${chroma.tolerance}` : `${id}:raw`;
+  const fringe = chroma.fringe ?? 0; // tolerate older saved docs without the field
+  const key = chroma.enabled ? `${id}:${chroma.tolerance}:${fringe}` : `${id}:raw`;
   const hit = keyedCache.get(key);
   if (hit) return hit;
   const img = await getImage(id);
   const c = newCanvas(img.naturalWidth, img.naturalHeight);
   const g = ctx2d(c);
   g.drawImage(img, 0, 0);
-  if (chroma.enabled) chromaKeyCanvas(g, c.width, c.height, chroma.tolerance);
+  if (chroma.enabled) chromaKeyCanvas(g, c.width, c.height, chroma.tolerance, fringe);
   keyedCache.set(key, c);
   return c;
 }

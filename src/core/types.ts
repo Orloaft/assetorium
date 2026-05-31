@@ -27,10 +27,16 @@ export interface ChromaSettings {
   enabled: boolean;
   /** 0..255 — how far a pixel may stray from pure magenta and still key out. */
   tolerance: number;
+  /** Hue-based anti-alias fringe cleanup. Targets dark/desaturated magenta
+   * edge pixels (where red & blue both exceed green) that the brightness-based
+   * tolerance can't reach. The value is the "magenta cast" cutoff: pixels with
+   * cast above it become transparent, milder casts are de-tinted (despilled).
+   * 0 = off. */
+  fringe: number;
 }
 
 export function defaultChroma(): ChromaSettings {
-  return { enabled: true, tolerance: 60 };
+  return { enabled: true, tolerance: 60, fringe: 24 };
 }
 
 // ---------------------------------------------------------------------------
