@@ -544,11 +544,11 @@ export function mountStageEditor(root: HTMLElement): Editor {
         button("✕", (e: Event) => { e.stopPropagation(); mutate(() => (project.terrains = project.terrains.filter((x) => x.id !== t.id))); if (L.activeTerrainId === t.id) L.activeTerrainId = null; refreshCanvasInspector(); }, "sm danger")));
     });
     sec.append(list,
-      el("div.hint", {}, "Order = priority (p0 lowest). Higher terrains own their borders — paint a base everywhere (fill), then patches/roads on top. ▲ raises priority."),
+      el("div.hint", {}, `Pick a texture & paint (HoMM3-style): ① click a clean tile in the palette → ② Make terrain → ③ select it + paint. First terrain is the base (use ▣ Fill); later ones blend over it. ${L.activeRef ? "" : "(select a palette tile to enable)"}`),
       el("div.btn-row", { style: { marginTop: "6px" } },
-        button("✨ Auto-create terrains from tileset", () => autoCreateTerrains(), "primary")),
+        button("➕ Make terrain from selected tile", () => makeTerrainFromSelected(), L.activeRef ? "primary" : "")),
       el("div.btn-row", { style: { marginTop: "6px" } },
-        button("+ Terrain", () => newTerrain("edge16")),
+        button("✨ Auto-create (guess all)", () => autoCreateTerrains()),
         button("+ Road", () => newTerrain("path"))));
 
     // Synthesized transitions: blend one fill terrain into another (for sheets
@@ -763,6 +763,48 @@ export function mountStageEditor(root: HTMLElement): Editor {
   /** One-click: cluster a tileset's seamless fills into surfaces and auto-build
    * a paintable blob47 terrain for each (HoMM3-style "pick a surface, paint").
    * Largest surface = base (lowest priority); water sorts to highest. */
+  /** HoMM3-style: turn the selected palette tile into a paintable terrain. The
+   * first one is the seamless base; later ones dither-blend over the base. The
+   * user picks clean textures, so results aren't at the mercy of auto-guessing. */
+  async function makeTerrainFromSelected(): Promise<void> {
+    const d = doc();
+    if (!d) return;
+    if (!L.activeRef) { setStatus("Click a tile in the palette first, then Make terrain"); return; }
+    const img = L.tileImg.get(L.activeRef);
+    if (!img) { setStatus("Tile art not loaded"); return; }
+    const project = getProject();
+    const name = colorName(tileCenter(img) ?? [128, 128, 128]);
+    const crop = centerCrop(img);
+    const base = project.terrains[0];
+
+    if (!base) {
+      // First terrain = seamless base; adopt the picked tile's size as the cell.
+      const [tsId, tileId] = L.activeRef.split("/");
+      const tile = project.tilesets.find((t) => t.id === tsId)?.tiles.find((x) => x.id === tileId);
+      const unit = tile ? Math.round((tile.w + tile.h) / 2) : d.tileSize;
+      const built = await buildFillTerrain(crop, unit, name);
+      mutate((p) => { p.sources.push(built.source); p.tilesets.push(built.tileset); p.terrains.push(built.terrain); d.tileSize = unit; });
+      await ensureTileImages();
+      vp.fit(d.cols * d.tileSize, d.rows * d.tileSize);
+      L.activeTerrainId = built.terrain.id;
+      setStatus(`Base terrain "${name}" — ▣ Fill active layer, then add more textures`);
+    } else {
+      // Blend the picked texture over the base.
+      const baseImg = L.tileImg.get(base.roles[15] ?? base.roles[0] ?? "");
+      if (!baseImg) { setStatus("Base terrain art missing"); return; }
+      const band = Math.max(2, Math.round(d.tileSize * 0.18));
+      const built = await buildSynthTerrain(crop, baseImg, d.tileSize, name, band);
+      mutate((p) => { p.sources.push(built.source); p.tilesets.push(built.tileset); p.terrains.push(built.terrain); });
+      await ensureTileImages();
+      L.activeTerrainId = built.terrain.id;
+      setStatus(`Added terrain "${name}" — pick it and paint; it blends over ${base.name}`);
+    }
+    L.tool = "terrain";
+    renderSidebar();
+    renderInspector();
+    vp.render();
+  }
+
   async function autoCreateTerrains(): Promise<void> {
     const project = getProject();
     const d = doc();

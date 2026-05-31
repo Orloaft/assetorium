@@ -196,19 +196,21 @@ Compose a stage by painting tiles from your tilesets, then define collisions.
    at its true proportions across multiple cells (trees, rocks, buildings). They
    y-sort (nearer objects overlap farther ones) and snap to their base. Click an
    object to select/move it.
-5. **Paint *areas* (the HoMM3 way)** — the fastest path: slice a biome sheet,
-   then in the Stage Editor click **✨ Auto-create terrains from tileset**. It
-   clusters the sheet's surfaces into a few clean terrains (grass, dirt, sand,
-   water…), sets a matching tile size, and for each non-base surface
-   **synthesizes soft dither borders over the base** — so painting *any* terrain
-   blends into what's under it, regardless of the sheet's edge art.
-   - Then: pick the **base** terrain and **▣ Fill active layer** to lay the
-     ground, select another terrain, grab the **terrain** tool + a **brush**, and
-     paint. You get **contiguous regions that blend at the edges, not a grid of
-     bordered squares or flat blocky cutouts**.
-   - Want hand-drawn shore/edge tiles instead of synthesized dither? Use
-     **🧩 Auto-build from sheet** (set fill + base) — it assigns the sheet's real
-     edge/corner tiles.
+5. **Pick a texture & paint (the HoMM3 way)** — slice a biome sheet, then in the
+   Stage Editor build your terrain palette by hand so you control exactly which
+   tile each terrain uses:
+   1. **Click a clean tile** in the palette (e.g. a plain grass).
+   2. **➕ Make terrain from selected tile.** The first one becomes the seamless
+      **base** (its baked border is cropped so it tiles as a continuous field);
+      each later one is **dither-blended over the base**.
+   3. Select the terrain, grab the **terrain** tool + a **brush**, and paint.
+      Use **▣ Fill active layer** to lay the base everywhere first.
+   You get **contiguous regions that blend at the edges** — not a grid of
+   bordered squares or flat cutouts. Paint grass, then a water lake, a dirt road,
+   etc., each blending into what's under it.
+   - **✨ Auto-create** guesses all surfaces at once (faster, but picks the tiles
+     for you). **🧩 Auto-build from sheet** uses the sheet's real hand-drawn
+     edge/corner tiles instead of synthesized dither (set fill + base).
    - **Palette badges**: `◳` = multi-cell object; `◱` (amber) = an *edged* tile
      (pond/patch with a baked border) — painting it raw repeats the border, so
      make it a **terrain** instead; no badge = a seamless fill you can paint
