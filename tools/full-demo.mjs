@@ -6,7 +6,7 @@ const SHOT="/mnt/nxt-dev/asset-forge/docs/shots", OUT="/mnt/nxt-dev/asset-forge/
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1520, height: 920 }, acceptDownloads: true });
 const errs=[]; page.on("pageerror",e=>errs.push(e.message)); page.on("console",m=>{if(m.type()==="error")errs.push(m.text());});
-let saved=null; page.on("download",async d=>{if(d.suggestedFilename().endsWith(".afproj.json")){saved=`${OUT}/grass-water-roads-demo.afproj.json`;await d.saveAs(saved);}});
+let saved=null; page.on("download",async d=>{if(d.suggestedFilename().endsWith(".afproj.json")){saved=`${OUT}/roads-aligned-demo.afproj.json`;await d.saveAs(saved);}});
 await page.goto("http://localhost:4173/", { waitUntil: "networkidle" });
 await page.waitForSelector("#tabs .tab");
 const b64=(p)=>"data:image/png;base64,"+readFileSync(p).toString("base64");
@@ -43,19 +43,22 @@ await page.locator('.inspector .section:has(h3:text-is("Layers")) .list-item').n
 await sw.nth(16).click();
 await page.click('button:has-text("Road from 16-tile set")'); await page.waitForTimeout(500);
 await page.locator('.inspector .section:has(h3:text-is("Terrains (autotile)")) .list-item').last().click();
+await page.click('.inspector button:has-text("Align road")'); await page.waitForTimeout(900);
+await setField("Tile size",96); await page.waitForTimeout(80);
+await page.locator('.inspector .section:has(h3:text-is("Terrains (autotile)")) .list-item').last().click();
 await page.click('.inspector button:has-text("terrain")');
 await page.click('.inspector button:has-text("1×1")');
 // a winding road + a crossing → junctions
-const stroke=async(pts)=>{await page.mouse.move(L+Wd*pts[0][0],T+Hd*pts[0][1]);await page.mouse.down();for(const[x,y]of pts.slice(1))await page.mouse.move(L+Wd*x,T+Hd*y,{steps:10});await page.mouse.up();await page.waitForTimeout(120);};
+const stroke=async(pts)=>{await page.mouse.move(L+Wd*pts[0][0],T+Hd*pts[0][1]);await page.mouse.down();for(const[x,y]of pts.slice(1))await page.mouse.move(L+Wd*x,T+Hd*y,{steps:60});await page.mouse.up();await page.waitForTimeout(120);};
 await stroke([[0.1,0.3],[0.4,0.3],[0.6,0.3],[0.85,0.3]]); // horizontal
 await stroke([[0.55,0.12],[0.55,0.3],[0.55,0.5],[0.55,0.8]]); // vertical crossing it
 const gridCb=page.locator('label.check:has-text("Grid") input'); if(await gridCb.isChecked())await gridCb.click();
 const colCb=page.locator('label.check:has-text("Show collision") input'); if(await colCb.isChecked())await colCb.click();
 await page.waitForTimeout(200);
-await page.screenshot({ path: `${SHOT}/25-full-demo.png` });
+await page.screenshot({ path: `${SHOT}/27-roads-aligned.png` });
 await page.mouse.move(L+Wd*0.55,T+Hd*0.3); for(let i=0;i<3;i++){await page.mouse.wheel(0,-120);await page.waitForTimeout(40);}
 await page.waitForTimeout(150);
-await page.screenshot({ path: `${SHOT}/26-full-demo-zoom.png` });
+await page.screenshot({ path: `${SHOT}/28-roads-aligned-zoom.png` });
 await page.click("#btn-save-project").catch(()=>{}); await page.waitForTimeout(800);
 await browser.close();
 console.log("saved",saved, errs.length?("ERR "+errs.join(";")):"no errors");

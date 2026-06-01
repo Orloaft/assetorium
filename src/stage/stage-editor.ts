@@ -594,7 +594,8 @@ export function mountStageEditor(root: HTMLElement): Editor {
     if (terrain) {
       sec.append(el("div.btn-row", { style: { marginTop: "4px" } },
         button(`▣ Fill active layer with "${terrain.name}"`, () => fillLayerWithTerrain(terrain)),
-        terrain.kind === "wang" ? button("🔧 Align corners", () => alignWangCorners(terrain)) : null));
+        terrain.kind === "wang" ? button("🔧 Align corners", () => alignWangCorners(terrain)) : null,
+        terrain.kind === "path" ? button("🔧 Align road", () => alignRoad(terrain)) : null));
       if (terrain.kind === "wang") {
         sec.append(el("div.hint", { style: { margin: "4px 0" } }, "Align corners: re-derive the 10 rotation-equivalent tiles from the 6 canonical ones (0,1,3,5,7,15) so edges/corners match exactly — fixes mis-aligned shorelines."));
       }
@@ -803,6 +804,59 @@ export function mountStageEditor(root: HTMLElement): Editor {
     });
     await ensureTileImages();
     setStatus(`Aligned "${terrain.name}" — corners derived by rotation`);
+    renderInspector();
+    vp.render();
+  }
+
+  /** Composite a 4-way cross from the vertical + horizontal straights so its
+   * arms have exactly the straight road width (road = union of either straight). */
+  function compositeCross(vert: HTMLCanvasElement, horiz: HTMLCanvasElement, size: number): HTMLCanvasElement {
+    const vd = ctx2d(vert).getImageData(0, 0, size, size).data;
+    const hd = ctx2d(horiz).getImageData(0, 0, size, size).data;
+    const out = newCanvas(size, size);
+    const g = ctx2d(out);
+    const od = g.createImageData(size, size);
+    const road = (d: Uint8ClampedArray, i: number): boolean => d[i + 3] > 40 && d[i] > 120 && d[i + 1] > 70 && d[i] - d[i + 2] > 25 && !(d[i + 1] > d[i] + 12);
+    for (let i = 0; i < od.data.length; i += 4) {
+      let src: Uint8ClampedArray | null = null;
+      if (road(vd, i)) src = vd; else if (road(hd, i)) src = hd; else if (vd[i + 3] > 40) src = vd; else if (hd[i + 3] > 40) src = hd;
+      if (!src) { od.data[i + 3] = 0; continue; }
+      od.data[i] = src[i]; od.data[i + 1] = src[i + 1]; od.data[i + 2] = src[i + 2]; od.data[i + 3] = src[i + 3];
+    }
+    g.putImageData(od, 0, 0);
+    return out;
+  }
+
+  /** Re-derive a road's 16 tiles from the canonical straight/corner/T/stub by
+   * rotation (so horizontal == vertical width, all corners/Ts match) and rebuild
+   * the cross from the straights — fixes mismatched hand-drawn road widths. */
+  async function alignRoad(terrain: Terrain): Promise<void> {
+    const size = getProject().tilesets.find((t) => t.id === terrain.tilesetId)?.tileSize ?? doc()?.tileSize ?? 64;
+    const canon: Record<number, HTMLCanvasElement> = {};
+    for (const k of [0, 1, 3, 5, 7]) {
+      const ref = terrain.roles[k];
+      const im = ref ? L.tileImg.get(ref) : undefined;
+      if (!im) { setStatus(`Align road needs tiles 0,1,3,5,7 (missing ${k})`); return; }
+      canon[k] = square(im, size);
+    }
+    const img: HTMLCanvasElement[] = [];
+    img[0] = canon[0];
+    img[1] = canon[1]; img[2] = rot90(canon[1], 1); img[4] = rot90(canon[1], 2); img[8] = rot90(canon[1], 3); // stubs
+    img[3] = canon[3]; img[6] = rot90(canon[3], 1); img[12] = rot90(canon[3], 2); img[9] = rot90(canon[3], 3); // corners
+    img[5] = canon[5]; img[10] = rot90(canon[5], 1); // straights
+    img[7] = canon[7]; img[14] = rot90(canon[7], 1); img[13] = rot90(canon[7], 2); img[11] = rot90(canon[7], 3); // T
+    img[15] = compositeCross(canon[5], img[10], size); // cross from straights
+    const sheet = newCanvas(size * 16, size);
+    const g = ctx2d(sheet);
+    for (let i = 0; i < 16; i++) g.drawImage(img[i], 0, 0, size, size, i * size, 0, size, size);
+    const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
+    const source = await importSourceDataUrl(uid("src"), `${terrain.name}-aligned`, dataUrl);
+    const tsId = uid("ts");
+    const tiles: TileDef[] = Array.from({ length: 16 }, (_, i) => ({ id: uid("t"), char: "", name: `r${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: [] }));
+    const tileset: TilesetDoc = { id: tsId, name: `${terrain.name}-aligned`, sourceId: source.id, chroma: { enabled: false, tolerance: 0, fringe: 0 }, tileSize: size, grid: { offsetX: 0, offsetY: 0, cols: 16, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 }, tiles };
+    mutate((p) => { p.sources.push(source); p.tilesets.push(tileset); terrain.tilesetId = tsId; tiles.forEach((t, i) => (terrain.roles[i] = `${tsId}/${t.id}`)); });
+    await ensureTileImages();
+    setStatus(`Aligned road "${terrain.name}" — widths matched, cross rebuilt`);
     renderInspector();
     vp.render();
   }
