@@ -592,7 +592,11 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const terrain = project.terrains.find((t) => t.id === L.activeTerrainId);
     if (terrain) {
       sec.append(el("div.btn-row", { style: { marginTop: "4px" } },
-        button(`▣ Fill active layer with "${terrain.name}"`, () => fillLayerWithTerrain(terrain))));
+        button(`▣ Fill active layer with "${terrain.name}"`, () => fillLayerWithTerrain(terrain)),
+        terrain.kind === "wang" ? button("🔧 Align corners", () => alignWangCorners(terrain)) : null));
+      if (terrain.kind === "wang") {
+        sec.append(el("div.hint", { style: { margin: "4px 0" } }, "Align corners: re-derive the 10 rotation-equivalent tiles from the 6 canonical ones (0,1,3,5,7,15) so edges/corners match exactly — fixes mis-aligned shorelines."));
+      }
     }
     if (terrain && terrain.kind === "blob47") {
       sec.append(el("div.hint", { style: { margin: "6px 0" } },
@@ -741,6 +745,65 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const roles: Record<number, string> = {};
     tiles.forEach((t, mask) => (roles[mask] = `${tsId}/${t.id}`));
     return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "wang", roles } };
+  }
+
+  /** Scale a tile into a square `size`×`size` canvas. */
+  function square(img: HTMLCanvasElement, size: number): HTMLCanvasElement {
+    const c = newCanvas(size, size);
+    ctx2d(c).drawImage(img, 0, 0, img.width, img.height, 0, 0, size, size);
+    return c;
+  }
+  /** Rotate a square canvas 90° clockwise `n` times. */
+  function rot90(src: HTMLCanvasElement, n: number): HTMLCanvasElement {
+    let c = src;
+    for (let k = 0; k < (((n % 4) + 4) % 4); k++) {
+      const s = c.width;
+      const o = newCanvas(s, s);
+      const g = ctx2d(o);
+      g.translate(s, 0);
+      g.rotate(Math.PI / 2);
+      g.drawImage(c, 0, 0, s, s);
+      c = o;
+    }
+    return c;
+  }
+
+  /** Re-derive the 10 rotation-equivalent tiles of a Wang terrain from the 6
+   * canonical ones (0,1,3,5,7,15), so every corner/edge is geometrically
+   * identical and aligns perfectly (fixes mismatched hand-drawn corners). */
+  async function alignWangCorners(terrain: Terrain): Promise<void> {
+    const size = getProject().tilesets.find((t) => t.id === terrain.tilesetId)?.tileSize ?? doc()?.tileSize ?? 64;
+    const canon: Record<number, HTMLCanvasElement> = {};
+    for (const k of [0, 1, 3, 5, 7, 15]) {
+      const ref = terrain.roles[k];
+      const img = ref ? L.tileImg.get(ref) : undefined;
+      if (!img) { setStatus(`Align needs tiles 0,1,3,5,7,15 assigned (missing ${k})`); return; }
+      canon[k] = square(img, size);
+    }
+    const img: HTMLCanvasElement[] = [];
+    img[0] = canon[0]; img[15] = canon[15];
+    img[1] = canon[1]; img[2] = rot90(canon[1], 1); img[4] = rot90(canon[1], 2); img[8] = rot90(canon[1], 3); // corner
+    img[3] = canon[3]; img[6] = rot90(canon[3], 1); img[12] = rot90(canon[3], 2); img[9] = rot90(canon[3], 3); // edge
+    img[5] = canon[5]; img[10] = rot90(canon[5], 1); // diagonal
+    img[7] = canon[7]; img[14] = rot90(canon[7], 1); img[13] = rot90(canon[7], 2); img[11] = rot90(canon[7], 3); // inner
+    // Pack into a fresh 16-tile sheet → source + tileset, repoint the terrain.
+    const sheet = newCanvas(size * 16, size);
+    const g = ctx2d(sheet);
+    for (let i = 0; i < 16; i++) g.drawImage(img[i], 0, 0, size, size, i * size, 0, size, size);
+    const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
+    const source = await importSourceDataUrl(uid("src"), `${terrain.name}-aligned`, dataUrl);
+    const tsId = uid("ts");
+    const tiles: TileDef[] = Array.from({ length: 16 }, (_, i) => ({ id: uid("t"), char: "", name: `w${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: [] }));
+    const tileset: TilesetDoc = { id: tsId, name: `${terrain.name}-aligned`, sourceId: source.id, chroma: { enabled: false, tolerance: 0, fringe: 0 }, tileSize: size, grid: { offsetX: 0, offsetY: 0, cols: 16, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 }, tiles };
+    mutate((p) => {
+      p.sources.push(source); p.tilesets.push(tileset);
+      terrain.tilesetId = tsId;
+      tiles.forEach((t, i) => (terrain.roles[i] = `${tsId}/${t.id}`));
+    });
+    await ensureTileImages();
+    setStatus(`Aligned "${terrain.name}" — corners derived by rotation`);
+    renderInspector();
+    vp.render();
   }
 
   /** Import a hand-authored 16-tile Wang set (the active tileset, sliced 4×4 or

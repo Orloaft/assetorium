@@ -7,7 +7,7 @@ const OUT = "/mnt/nxt-dev/asset-forge/docs/demo"; mkdirSync(OUT, { recursive: tr
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 }, acceptDownloads: true });
 const errs=[]; page.on("pageerror",e=>errs.push(e.message)); page.on("console",m=>{if(m.type()==="error")errs.push(m.text());});
-let saved=null; page.on("download", async d=>{ if(d.suggestedFilename().endsWith(".afproj.json")){saved=`${OUT}/wang-water-demo.afproj.json`; await d.saveAs(saved);} });
+let saved=null; page.on("download", async d=>{ if(d.suggestedFilename().endsWith(".afproj.json")){saved=`${OUT}/wang-aligned-demo.afproj.json`; await d.saveAs(saved);} });
 await page.goto("http://localhost:4173/", { waitUntil: "networkidle" });
 await page.waitForSelector("#tabs .tab");
 const dataUrl = "data:image/png;base64," + readFileSync("/mnt/nxt-dev/tib/assetsources/newtiles1-fixed.png").toString("base64");
@@ -37,6 +37,9 @@ await sw.nth(0).click();
 await page.click('button:has-text("Wang terrain from 16-tile set")'); await page.waitForTimeout(600);
 await setField("Tile size", 96); await page.waitForTimeout(100); // import reset it to 256; bring back
 await page.locator('.inspector .section:has(h3:text-is("Terrains (autotile)")) .list-item').last().click();
+await page.click('.inspector button:has-text("Align corners")'); await page.waitForTimeout(1000);
+await setField("Tile size", 96); await page.waitForTimeout(80);
+await page.locator('.inspector .section:has(h3:text-is("Terrains (autotile)")) .list-item').last().click();
 await page.click('.inspector button:has-text("terrain")');
 const cv=page.locator(".stage-area canvas"); const bx=await cv.boundingBox();
 const L=bx.x,T=bx.y,W=bx.width,H=bx.height;
@@ -51,10 +54,10 @@ await stroke([[0.43,0.55],[0.55,0.45],[0.68,0.5],[0.8,0.38],[0.9,0.42]]);
 const gridCb=page.locator('label.check:has-text("Grid") input'); if(await gridCb.isChecked())await gridCb.click();
 const colCb=page.locator('label.check:has-text("Show collision") input'); if(await colCb.isChecked())await colCb.click();
 await page.waitForTimeout(200);
-await page.screenshot({ path: `${SHOT}/21-wang-demo.png` });
+await page.screenshot({ path: `${SHOT}/23-wang-aligned.png` });
 await page.mouse.move(L+W*0.35,T+H*0.55); for(let i=0;i<4;i++){await page.mouse.wheel(0,-120);await page.waitForTimeout(40);}
 await page.waitForTimeout(150);
-await page.screenshot({ path: `${SHOT}/22-wang-demo-zoom.png` });
+await page.screenshot({ path: `${SHOT}/24-wang-aligned-zoom.png` });
 await page.click("#btn-save-project").catch(()=>{}); await page.waitForTimeout(800);
 await browser.close();
 console.log("saved:", saved, errs.length?("ERR "+errs.join(";")):"no errors");
