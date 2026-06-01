@@ -365,7 +365,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
       if (layer.terrain) {
         drawWangLayer(g, layer.terrain, terrainsById, rank, (r) => L.tileImg.get(r), ts, d.cols, d.rows);
         drawCliffWalls(g, layer, d, ts);
-        drawCliffEdges(g, layer, d, ts);
+        drawCliff(g, layer, d, ts);
       }
     }
 
@@ -780,34 +780,79 @@ export function mountStageEditor(root: HTMLElement): Editor {
     }
   }
 
-  /** Draw a kind-"cliff" terrain: the hand-drawn south-face tile, rotated onto
-   * every exposed edge of the painted region (south as-drawn, west +90°, east
-   * −90°, north 180°). Uses the real art directly — no synthesis. South is drawn
-   * last so the main drop reads on top; corners get two overlaid faces. */
-  function drawCliffEdges(g: CanvasRenderingContext2D, layer: StageLayer, d: StageDoc, ts: number): void {
+  // Cache of full-cell "mid-wall" rock derived from a cliff face tile (its rock
+  // band, lip removed, stretched to fill a cell), keyed by faceRef@tileSize.
+  const cliffRockCache = new Map<string, HTMLCanvasElement>();
+  function cliffRockFill(faceRef: string, face: HTMLCanvasElement, ts: number): HTMLCanvasElement {
+    const key = `${faceRef}@${ts}`;
+    const hit = cliffRockCache.get(key);
+    if (hit) return hit;
+    const S = ts;
+    const tmp = newCanvas(S, S);
+    ctx2d(tmp).drawImage(face, 0, 0, face.width, face.height, 0, 0, S, S);
+    const data = ctx2d(tmp).getImageData(0, 0, S, S).data;
+    let top = S, bot = 0;
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) if (data[(y * S + x) * 4 + 3] > 120) { if (y < top) top = y; if (y > bot) bot = y; break; }
+    const fill = newCanvas(S, S);
+    if (bot > top) {
+      const h = bot - top + 1, rTop = top + Math.floor(h * 0.45), rH = Math.max(1, bot - rTop + 1);
+      ctx2d(fill).drawImage(tmp, 0, rTop, S, rH, 0, 0, S, S); // rock band → full cell
+    } else ctx2d(fill).drawImage(tmp, 0, 0);
+    cliffRockCache.set(key, fill);
+    return fill;
+  }
+
+  /** Draw a kind-"cliff" terrain as a proper JRPG cliff: a subtly lifted plateau
+   * top, a tall rock WALL dropping from the south/front edge (face tile + a
+   * mid-wall row below), short rotated returns on the E/W edges, a clean
+   * highlighted top edge to the north/west, and a drop shadow on the ground. */
+  function drawCliff(g: CanvasRenderingContext2D, layer: StageLayer, d: StageDoc, ts: number): void {
     const mem = layer.terrain;
     if (!mem) return;
+    const H = 1; // extra full-rock cells below the south edge (wall height − 1)
     for (const t of getProject().terrains) {
       if (t.kind !== "cliff" || !t.faceRef) continue;
       const face = L.tileImg.get(t.faceRef);
       if (!face) continue;
+      const rock = cliffRockFill(t.faceRef, face, ts);
       const isC = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < d.cols && y < d.rows && mem[y]?.[x] === t.id;
-      const rot = (x: number, y: number, deg: number): void => {
+      const rot = (img: HTMLCanvasElement, x: number, y: number, deg: number): void => {
         g.save();
         g.translate((x + 0.5) * ts, (y + 0.5) * ts);
         g.rotate((deg * Math.PI) / 180);
-        g.drawImage(face, 0, 0, face.width, face.height, -ts / 2, -ts / 2, ts, ts);
+        g.drawImage(img, 0, 0, img.width, img.height, -ts / 2, -ts / 2, ts, ts);
         g.restore();
       };
-      for (let y = 0; y < d.rows; y++) {
-        for (let x = 0; x < d.cols; x++) {
-          if (!isC(x, y)) continue;
-          if (!isC(x, y - 1)) rot(x, y, 180); // north (back) edge
-          if (!isC(x - 1, y)) rot(x, y, 90);  // west face
-          if (!isC(x + 1, y)) rot(x, y, -90); // east face
-          if (!isC(x, y + 1)) rot(x, y, 0);   // south drop (drawn last/on top)
+      // 1) subtle lift on the plateau top
+      g.fillStyle = "rgba(255,249,232,0.10)";
+      for (let y = 0; y < d.rows; y++) for (let x = 0; x < d.cols; x++) if (isC(x, y)) g.fillRect(x * ts, y * ts, ts, ts);
+      // 2) drop shadow on the lower ground just beneath the wall base (the south
+      //    wall spans rows e+1..e+H below a plateau edge at row e; shadow at e+H+1)
+      g.fillStyle = "rgba(18,16,26,0.30)";
+      for (let y = 0; y < d.rows; y++) for (let x = 0; x < d.cols; x++) {
+        if (isC(x, y)) continue;
+        if (isC(x, y - 1 - H) && !isC(x, y - 1)) g.fillRect(x * ts, y * ts, ts, ts * 0.45); // under south wall base
+      }
+      // 3) walls + returns
+      for (let y = 0; y < d.rows; y++) for (let x = 0; x < d.cols; x++) {
+        if (!isC(x, y)) continue;
+        if (!isC(x - 1, y)) rot(face, x, y, 90);  // west return
+        if (!isC(x + 1, y)) rot(face, x, y, -90); // east return
+        if (!isC(x, y + 1)) {                     // south front wall
+          for (let k = 1; k <= H; k++) if (y + k < d.rows && !isC(x, y + k)) g.drawImage(rock, 0, 0, rock.width, rock.height, x * ts, (y + k) * ts, ts, ts);
+          rot(face, x, y, 0); // top-of-wall (lip + rock) in the edge cell, on top
         }
       }
+      // 4) bright top-edge highlight to the north & west (the "lifted" read)
+      g.strokeStyle = "rgba(255,255,255,0.45)";
+      g.lineWidth = Math.max(1.5, ts * 0.04);
+      g.beginPath();
+      for (let y = 0; y < d.rows; y++) for (let x = 0; x < d.cols; x++) {
+        if (!isC(x, y)) continue;
+        if (!isC(x, y - 1)) { g.moveTo(x * ts, y * ts + g.lineWidth / 2); g.lineTo((x + 1) * ts, y * ts + g.lineWidth / 2); }
+        if (!isC(x - 1, y)) { g.moveTo(x * ts + g.lineWidth / 2, y * ts); g.lineTo(x * ts + g.lineWidth / 2, (y + 1) * ts); }
+      }
+      g.stroke();
     }
   }
 
