@@ -565,7 +565,8 @@ export function mountStageEditor(root: HTMLElement): Editor {
         button("✨ Auto-create (guess all)", () => autoCreateTerrains()),
         button("+ Road", () => newTerrain("path"))),
       el("div.btn-row", { style: { marginTop: "6px" } },
-        button("➕ Wang terrain from 16-tile set", () => importWangFromTileset())),
+        button("➕ Wang terrain from 16-tile set", () => importWangFromTileset()),
+        button("🛣 Road from 16-tile set", () => importRoadFromTileset())),
       el("div.hint", {}, "Wang terrains blend seamlessly via corner tiles (no repeating borders). Load a hand-authored 16-tile Wang sheet (slice it 4×4), then ‘Wang terrain from 16-tile set’ — see docs/autotile-template-spec.md."));
 
     // Synthesized transitions: blend one fill terrain into another (for sheets
@@ -804,6 +805,24 @@ export function mountStageEditor(root: HTMLElement): Editor {
     setStatus(`Aligned "${terrain.name}" — corners derived by rotation`);
     renderInspector();
     vp.render();
+  }
+
+  /** Import a 16-tile road/edge set (sliced in index order, N=1/E=2/S=4/W=8) as
+   * a linear `path` terrain — paint it on an overlay layer; junctions resolve. */
+  function importRoadFromTileset(): void {
+    const d = doc();
+    const tsId = (L.activeRef && L.activeRef.split("/")[0]) || getProject().tilesets[0]?.id;
+    const ts = getProject().tilesets.find((t) => t.id === tsId);
+    if (!ts || ts.tiles.length < 16) { setStatus("Need a sliced 16-tile road set (slice the sheet 4×4 first)"); return; }
+    const roles: Record<number, string> = {};
+    for (let i = 0; i < 16; i++) roles[i] = `${tsId}/${ts.tiles[i].id}`;
+    const terrain: Terrain = { id: uid("terr"), name: `${ts.name}-road`, tilesetId: tsId, kind: "path", roles };
+    mutate((p) => p.terrains.push(terrain));
+    if (d) d.tileSize = ts.tileSize;
+    L.activeTerrainId = terrain.id;
+    L.tool = "terrain";
+    setStatus(`Road "${ts.name}" from 16-tile set — paint on an overlay layer; junctions resolve automatically`);
+    refreshCanvasInspector();
   }
 
   /** Import a hand-authored 16-tile Wang set (the active tileset, sliced 4×4 or
