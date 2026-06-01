@@ -364,6 +364,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
       // 2) corner-Wang terrains, dual-grid rendered from membership
       if (layer.terrain) {
         drawWangLayer(g, layer.terrain, terrainsById, rank, (r) => L.tileImg.get(r), ts, d.cols, d.rows);
+        drawCliffWalls(g, layer, d, ts);
       }
     }
 
@@ -567,6 +568,8 @@ export function mountStageEditor(root: HTMLElement): Editor {
       el("div.btn-row", { style: { marginTop: "6px" } },
         button("➕ Wang terrain from 16-tile set", () => importWangFromTileset()),
         button("🛣 Road from 16-tile set", () => importRoadFromTileset())),
+      el("div.btn-row", { style: { marginTop: "6px" } },
+        button("🏔 Make cliff (top = selected, walls = 9-tile set)", () => makeCliffFromSelected(), L.activeRef ? "" : "")),
       el("div.hint", {}, "Wang terrains blend seamlessly via corner tiles (no repeating borders). Load a hand-authored 16-tile Wang sheet (slice it 4×4), then ‘Wang terrain from 16-tile set’ — see docs/autotile-template-spec.md."));
 
     // Synthesized transitions: blend one fill terrain into another (for sheets
@@ -747,6 +750,59 @@ export function mountStageEditor(root: HTMLElement): Editor {
     const roles: Record<number, string> = {};
     tiles.forEach((t, mask) => (roles[mask] = `${tsId}/${t.id}`));
     return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "wang", roles } };
+  }
+
+  /** Build a CLIFF terrain: a synthesized corner-Wang plateau top (`topFill`
+   * over `baseImg`) plus a 9-tile wall block packed into the same sheet. The
+   * wall (top/mid/base × L/C/R) is auto-drawn below the plateau's south edge. */
+  async function buildCliffTerrain(
+    topFill: HTMLCanvasElement, baseImg: HTMLCanvasElement, wallImgs: HTMLCanvasElement[], size: number, name: string, height: number
+  ): Promise<{ source: import("../core/types").SourceImage; tileset: TilesetDoc; terrain: Terrain }> {
+    const top = generateWang16(topFill, baseImg, size); // 16 opaque corner tiles
+    const sheet = newCanvas(size * 25, size);
+    const g = ctx2d(sheet);
+    g.drawImage(top, 0, 0);
+    for (let i = 0; i < 9; i++) g.drawImage(square(wallImgs[i], size), 0, 0, size, size, (16 + i) * size, 0, size, size);
+    const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
+    const source = await importSourceDataUrl(uid("src"), name, dataUrl);
+    const tsId = uid("ts");
+    const tiles: TileDef[] = Array.from({ length: 25 }, (_, i) => ({
+      id: uid("t"), char: "", name: i < 16 ? `top${i}` : `wall${i - 16}`, x: i * size, y: 0, w: size, h: size, blocked: i >= 16, sightBlocked: false, tags: []
+    }));
+    const tileset: TilesetDoc = {
+      id: tsId, name, sourceId: source.id, chroma: { enabled: false, tolerance: 0, fringe: 0 },
+      tileSize: size, grid: { offsetX: 0, offsetY: 0, cols: 25, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 }, tiles
+    };
+    const roles: Record<number, string> = {};
+    for (let i = 0; i < 16; i++) roles[i] = `${tsId}/${tiles[i].id}`;
+    const wall = { tiles: Array.from({ length: 9 }, (_, i) => `${tsId}/${tiles[16 + i].id}`), height: Math.max(1, height) };
+    return { source, tileset, terrain: { id: uid("terr"), name, tilesetId: tsId, kind: "wang", roles, wall } };
+  }
+
+  /** Draw cliff wall faces on the cells directly below each cliff terrain's
+   * south edge: top-of-wall under the plateau, mid repeated for height, base at
+   * ground; L/C/R columns chosen from the run's ends. */
+  function drawCliffWalls(g: CanvasRenderingContext2D, layer: StageLayer, d: StageDoc, ts: number): void {
+    const mem = layer.terrain;
+    if (!mem) return;
+    for (const t of getProject().terrains) {
+      if (!t.wall || !t.wall.tiles.length) continue;
+      const h = Math.max(1, t.wall.height);
+      const isC = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < d.cols && y < d.rows && mem[y]?.[x] === t.id;
+      for (let y = 0; y < d.rows; y++) {
+        for (let x = 0; x < d.cols; x++) {
+          if (!isC(x, y) || isC(x, y + 1)) continue; // only south-facing edges
+          const col = !isC(x - 1, y) ? 0 : !isC(x + 1, y) ? 2 : 1; // L / C / R end of the run
+          for (let k = 0; k < h; k++) {
+            const wy = y + 1 + k;
+            if (wy >= d.rows || isC(x, wy)) break; // off-grid or plateau resumes
+            const row = h === 1 ? 0 : k === 0 ? 0 : k === h - 1 ? 2 : 1; // top / mid / base
+            const img = L.tileImg.get(t.wall.tiles[row * 3 + col]);
+            if (img) g.drawImage(img, 0, 0, img.width, img.height, x * ts, wy * ts, ts, ts);
+          }
+        }
+      }
+    }
   }
 
   /** Scale a tile into a square `size`×`size` canvas. */
@@ -973,6 +1029,34 @@ export function mountStageEditor(root: HTMLElement): Editor {
       setStatus(`Added terrain "${name}" — pick it and paint; it blends over ${base.name}`);
     }
     L.tool = "terrain";
+    renderSidebar();
+    renderInspector();
+    vp.render();
+  }
+
+  /** Make a cliff: the selected palette tile is the plateau-top texture, the
+   * base terrain is the lower ground, and a 9-tile tileset (the sliced wall
+   * block, top/mid/base × L/C/R) is the wall face. */
+  async function makeCliffFromSelected(): Promise<void> {
+    const d = doc();
+    if (!d) return;
+    if (!L.activeRef) { setStatus("Click the plateau-top texture in the palette first"); return; }
+    const topImg = L.tileImg.get(L.activeRef);
+    if (!topImg) { setStatus("Top texture art not loaded"); return; }
+    const project = getProject();
+    const base = project.terrains[0];
+    const baseImg = base ? L.tileImg.get(base.roles[15] ?? base.roles[0] ?? "") : null;
+    if (!baseImg) { setStatus("Make a base terrain first (the lower ground the cliff sits on)"); return; }
+    const wallTs = project.tilesets.find((t) => t.tiles.length === 9);
+    if (!wallTs) { setStatus("Slice the wall block into a 9-tile set first (3×3)"); return; }
+    const wallImgs = wallTs.tiles.map((t) => L.tileImg.get(`${wallTs.id}/${t.id}`)).filter(Boolean) as HTMLCanvasElement[];
+    if (wallImgs.length < 9) { setStatus("Wall art not loaded"); return; }
+    const built = await buildCliffTerrain(centerCrop(topImg), baseImg, wallImgs, d.tileSize, "cliff", 2);
+    mutate((p) => { p.sources.push(built.source); p.tilesets.push(built.tileset); p.terrains.push(built.terrain); });
+    await ensureTileImages();
+    L.activeTerrainId = built.terrain.id;
+    L.tool = "terrain";
+    setStatus("Cliff ready — paint a plateau; the wall face auto-draws below its south edge");
     renderSidebar();
     renderInspector();
     vp.render();

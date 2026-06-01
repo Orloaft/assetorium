@@ -135,6 +135,12 @@ export interface Terrain {
   kind: "edge16" | "blob47" | "path" | "wang";
   /** maskValue -> tile ref. */
   roles: Record<number, string>;
+  /** Cliff wall, drawn on the cells directly below this terrain's south edge
+   * (RPG-Maker-A4 style). `tiles` is a 9-entry array of tile refs laid out
+   * row-major [topL,topC,topR, midL,midC,midR, baseL,baseC,baseR]; `height` is
+   * how many cells tall the wall face is. Only meaningful for kind "wang"
+   * (the plateau top is a normal corner-Wang set). */
+  wall?: { tiles: string[]; height: number };
 }
 
 // ---------------------------------------------------------------------------
