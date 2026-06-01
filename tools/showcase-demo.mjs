@@ -6,8 +6,9 @@ const pw = (await import(PW)).default ?? (await import(PW));
 const { chromium } = pw;
 const SHOT = "/mnt/nxt-dev/asset-forge/docs/shots"; mkdirSync(SHOT, { recursive: true });
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1520, height: 920 } });
+const page = await browser.newPage({ viewport: { width: 1520, height: 920 }, acceptDownloads: true });
 const errs = []; page.on("pageerror", e => errs.push(e.message)); page.on("console", m => { if (m.type() === "error") errs.push(m.text()); });
+let saved = null; page.on("download", async d => { if (d.suggestedFilename().endsWith(".afproj.json")) { saved = "/home/orlovboros/Downloads/asset-forge-showcase.afproj.json"; await d.saveAs(saved); } });
 await page.goto("http://localhost:4173/", { waitUntil: "networkidle" });
 await page.waitForSelector("#tabs .tab");
 const b64 = p => "data:image/png;base64," + readFileSync(p).toString("base64");
@@ -83,5 +84,6 @@ for (let y = 2; y <= 18; y++) await cell(14, y);       // vertical road → cros
 const gridCb = page.locator('label.check:has-text("Grid") input'); if (await gridCb.isChecked()) await gridCb.click();
 await page.waitForTimeout(200);
 await page.screenshot({ path: `${SHOT}/31-showcase.png` });
-console.log(errs.length ? ("ERR " + errs.join(";")) : "no errors");
+await page.click("#btn-save-project").catch(() => {}); await page.waitForTimeout(1200);
+console.log("saved:", saved, errs.length ? ("ERR " + errs.join(";")) : "no errors");
 await browser.close();

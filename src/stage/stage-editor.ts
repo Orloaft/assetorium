@@ -569,7 +569,8 @@ export function mountStageEditor(root: HTMLElement): Editor {
         button("➕ Wang terrain from 16-tile set", () => importWangFromTileset()),
         button("🛣 Road from 16-tile set", () => importRoadFromTileset())),
       el("div.btn-row", { style: { marginTop: "6px" } },
-        button("🏔 Make cliff (top = selected, walls = 9-tile set)", () => makeCliffFromSelected(), L.activeRef ? "" : "")),
+        button("🏔 Cliff edge set (16-tile)", () => importCliffEdgeFromTileset()),
+        button("Cliff (synth, legacy)", () => makeCliffFromSelected())),
       el("div.hint", {}, "Wang terrains blend seamlessly via corner tiles (no repeating borders). Load a hand-authored 16-tile Wang sheet (slice it 4×4), then ‘Wang terrain from 16-tile set’ — see docs/autotile-template-spec.md."));
 
     // Synthesized transitions: blend one fill terrain into another (for sheets
@@ -950,6 +951,56 @@ export function mountStageEditor(root: HTMLElement): Editor {
     L.activeTerrainId = terrain.id;
     L.tool = "terrain";
     setStatus(`Wang terrain "${ts.name}" from 16-tile set — pick it and paint`);
+    refreshCanvasInspector();
+  }
+
+  /** Import a 16-tile corner-Wang CLIFF EDGE set (transparent fill, idx 0 & 15
+   * empty, the 14 transitions drawn as rock faces — see spec §3). It's a normal
+   * wang terrain, but painted on an OVERLAY layer so the raised tier's terrain
+   * shows through the transparent interior and faces draw on every edge. Paint
+   * a smaller region inside an existing one for the next elevation tier. */
+  async function importCliffEdgeFromTileset(): Promise<void> {
+    const d = doc();
+    const tsId = (L.activeRef && L.activeRef.split("/")[0]) || getProject().tilesets[0]?.id;
+    const ts = getProject().tilesets.find((t) => t.id === tsId);
+    if (!ts || ts.tiles.length < 8) { setStatus("Slice the cliff-edge sheet to a 16-cell grid (4×4 or 16×1) first"); return; }
+    const size = ts.tileSize;
+    // Reconstruct the true 0..15 index of each tile from its grid position — the
+    // slicer may drop the empty idx 0 & 15 (transparent), which would shift array
+    // order. Pack a normalized 16-tile sheet; missing indices stay transparent so
+    // the plateau interior (idx 15) and open ground (idx 0) draw nothing.
+    const G = ts.grid;
+    const cols = Math.max(1, G.cols);
+    const sheet = newCanvas(size * 16, size);
+    const g = ctx2d(sheet);
+    for (const tile of ts.tiles) {
+      const c = Math.round((tile.x - G.offsetX) / (G.cellW + G.spacing));
+      const r = Math.round((tile.y - G.offsetY) / (G.cellH + G.spacing));
+      const idx = r * cols + c;
+      if (idx < 0 || idx > 15) continue;
+      const img = L.tileImg.get(`${ts.id}/${tile.id}`);
+      if (img) g.drawImage(square(img, size), 0, 0, size, size, idx * size, 0, size, size);
+    }
+    const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
+    const source = await importSourceDataUrl(uid("src"), `${ts.name}-cliff`, dataUrl);
+    const newTsId = uid("ts");
+    const tiles: TileDef[] = Array.from({ length: 16 }, (_, i) => ({ id: uid("t"), char: "", name: `c${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: [] }));
+    const tileset: TilesetDoc = { id: newTsId, name: `${ts.name}-cliff`, sourceId: source.id, chroma: { enabled: false, tolerance: 0, fringe: 0 }, tileSize: size, grid: { offsetX: 0, offsetY: 0, cols: 16, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 }, tiles };
+    const roles: Record<number, string> = {};
+    for (let i = 0; i < 16; i++) roles[i] = `${newTsId}/${tiles[i].id}`;
+    // Higher tiers paint inside lower ones; each is its own terrain so the inner
+    // ring of faces draws over the outer tier.
+    const tier = getProject().terrains.filter((t) => /cliff|tier/i.test(t.name)).length + 1;
+    const terrain: Terrain = { id: uid("terr"), name: `cliff-tier-${tier}`, tilesetId: newTsId, kind: "wang", roles };
+    mutate((p) => {
+      p.sources.push(source); p.tilesets.push(tileset); p.terrains.push(terrain);
+      if (d && d.layers.length < 2) d.layers.push({ id: uid("ly"), name: "elevation", visible: true, data: makeGrid(d.cols, d.rows, null) });
+    });
+    await ensureTileImages();
+    if (d) { d.tileSize = size; L.activeLayer = d.layers.length - 1; vp.fit(d.cols * d.tileSize, d.rows * d.tileSize); }
+    L.activeTerrainId = terrain.id;
+    L.tool = "terrain";
+    setStatus(`Cliff edge set "${ts.name}" → "${terrain.name}" on the elevation overlay — paint a raised region; faces draw on all sides, terrain shows through the top`);
     refreshCanvasInspector();
   }
 

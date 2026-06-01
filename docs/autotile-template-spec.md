@@ -70,31 +70,74 @@ the road path centred so segments connect across tile edges.
 
 ---
 
-## 3. Cliffs: top set + wall block (RPG-Maker-A4 style)
+## 3. Cliffs / elevation: 16-tile corner-Wang EDGE set (Warcraft-III tiers)
 
-A cliff = a raised **plateau top** + a **wall face** dropping to the lower
-ground. Provide two parts on one sheet:
+A cliff is **not** a special top tile — it's a **rock face drawn around the
+border of a raised region**, on every side. The raised area's *top* is just the
+normal terrain (grass/dirt) showing through; only the **edge** is cliff art.
 
-**A. Plateau top** — a 16-tile corner-Wang set (§1) of the top surface over the
-lower ground (so the plateau edge blends/has a lip).
+So a cliff set is a **16-tile corner-Wang set, identical in layout to §1**, with
+two differences:
+1. The "fill" is **transparent** (magenta), not a surface — the terrain on the
+   higher tier shows through. So **idx 0 and idx 15 are fully magenta** (empty).
+2. The 14 transition tiles are drawn as a **rock cliff face**, not a soft blend.
 
-**B. Wall block** — the vertical face shown beneath the plateau's **south** edge:
-- a **top-of-wall** row (where the plateau meets the face),
-- a **repeating mid-wall** tile (1 wide, tiles vertically for tall cliffs),
-- **left** and **right** wall **corner** columns (non-repeating end caps),
-- optional **inner-corner** pieces where the wall turns.
+A SET corner = the **HIGH** side (the raised plateau); an UNSET corner = the
+**LOW** side (the drop). The face is drawn where high meets low. Because it's
+corner-Wang on the dual grid, **the cell boundary runs through the vertical &
+horizontal CENTRE of each tile** — so a south drop is drawn in the *bottom half*
+of its tile, a lip sits on the centre line, etc.
 
-Layout (each cell = tile size), label the block clearly:
+Lay out 4×4 row-major by index (same as §1). What to draw in each:
 
 ```
-[wall TL][wall top ][wall TR]
-[wall L ][wall mid ][wall R ]
-[wall BL][wall base][wall BR]
+ EMPTY (all magenta):   idx 0 (all low) ,  idx 15 (all high / interior)
+
+ STRAIGHT FACES
+  idx 3  TL+TR high  → SOUTH face (the big one): tall rock wall in the BOTTOM
+                       ~60% of the tile; bright grass/dirt LIP on the centre
+                       line; soft shadow at its base. The main visible "drop".
+  idx 12 BL+BR high  → NORTH (back) edge: a thin dark lip/shadow line along the
+                       BOTTOM of the tile; rest transparent (barely seen).
+  idx 6  TR+BR high  → WEST face: narrow vertical rock strip down the LEFT half,
+                       lip on its right (plateau) side. Thinner than the south.
+  idx 9  TL+BL high  → EAST face: narrow vertical rock strip down the RIGHT half,
+                       lip on its left side. (mirror of idx 6)
+
+ OUTER (convex) CORNERS — a single high corner:
+  idx 1  TL only  → SE outer corner (south face wraps round to the east face)
+  idx 2  TR only  → SW outer corner (south + west faces meet)
+  idx 4  BR only  → NW outer corner (back lip wraps to the west face)
+  idx 8  BL only  → NE outer corner (back lip wraps to the east face)
+
+ INNER (concave) CORNERS — three high, one low (a notch):
+  idx 7  all but BL → notch opening SW    idx 11 all but BR → notch opening SE
+  idx 13 all but TR → notch opening NW    idx 14 all but TL → notch opening NE
+            (draw the two faces turning the concave corner inward)
+
+ DIAGONALS (two opposite high corners — rare):
+  idx 5  TL+BR → SE corner + NW corner faces in one tile
+  idx 10 TR+BL → SW corner + NE corner faces in one tile
 ```
 
-Asset Forge paints the plateau (top set); the wall face is auto-drawn on the
-cells directly below the plateau's south edge, using top-of-wall → mid (repeated
-for height) → base, with L/R corners at the ends.
+**Consistency (critical — same lesson as roads):** the rock face must be the
+**same height/thickness** and the lip the **same colour** across every tile, so
+faces line up where tiles meet. Keep the south-face thickness identical in
+idx 3, the outer corners and the inner corners. Shade so light reads from one
+fixed direction.
+
+**Tiers:** the *same* sheet handles every elevation level. To build a 2nd tier,
+paint a smaller raised region inside the first — the editor draws another face
+ring around it. No extra art.
+
+**Ramp (optional, +2 tiles):** a **ramp** tile (a walkable stepped/diagonal slope
+replacing the vertical south face) and a **ramp-top** tile (the lip where the
+ramp meets the upper tier). Lay these in a 5th row; placed manually on a south
+edge so a tier can be climbed (the editor marks it walkable).
+
+Filename hint: `cliff-<rock>.wang16.png` (e.g. `cliff-granite.wang16.png`).
+Drop it in, slice 4×4, then **"🏔 Cliff edge set (16-tile)"** — it paints on an
+overlay so the tier's terrain shows through the transparent interior.
 
 ---
 
@@ -104,4 +147,6 @@ for height) → base, with L/R corners at the ends.
       = corner-quadrant transitions; opaque.
 - [ ] All terrains in a biome share the **same base**.
 - [ ] Roads/rivers: 16 edge tiles, transparent surround.
-- [ ] Cliffs: top corner-set + wall block (top/mid/base + L/R corners).
+- [ ] Cliffs: 16-tile corner-Wang EDGE set — idx 0 & 15 fully transparent, the
+      14 others rock faces (set corner = HIGH); south face in the bottom half;
+      consistent face thickness; optional ramp + ramp-top.
