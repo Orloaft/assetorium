@@ -132,9 +132,13 @@ export interface Terrain {
   id: string;
   name: string;
   tilesetId: string;
-  kind: "edge16" | "blob47" | "path" | "wang";
+  kind: "edge16" | "blob47" | "path" | "wang" | "cliff";
   /** maskValue -> tile ref. */
   roles: Record<number, string>;
+  /** kind "cliff": a single south-facing cliff-face tile ref. Painted as a
+   * region; the face is drawn (rotated) on every exposed edge of the region, so
+   * one hand-drawn front face yields cliffs on all sides. Tiers nest. */
+  faceRef?: string;
   /** Cliff wall, drawn on the cells directly below this terrain's south edge
    * (RPG-Maker-A4 style). `tiles` is a 9-entry array of tile refs laid out
    * row-major [topL,topC,topR, midL,midC,midR, baseL,baseC,baseR]; `height` is

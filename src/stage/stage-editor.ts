@@ -10,7 +10,7 @@ import { downloadBlob } from "../core/download";
 import { packTileset } from "../tile/tile-pack";
 import { resolveCell, EDGE16_SLOTS, maskGlyph } from "./autotile";
 import { drawWangLayer } from "./wang";
-import { generateWang16, generateCliffWang } from "./wang-gen";
+import { generateWang16 } from "./wang-gen";
 import { classifyTileBlob, tileCenter, isSeamlessFill, colorDist, colorName } from "./classify";
 import type { RGB } from "./classify";
 import { importSourceDataUrl } from "../core/image";
@@ -162,7 +162,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
         // Wang terrains render straight from membership (dual-grid) — no data
         // writes. Legacy kinds resolve into the tile layer.
         const at = getProject().terrains.find((t) => t.id === L.activeTerrainId);
-        if (at && at.kind !== "wang") resolveSet(d, layer, cells);
+        if (at && at.kind !== "wang" && at.kind !== "cliff") resolveSet(d, layer, cells);
         vp.render();
       }
       return;
@@ -365,6 +365,7 @@ export function mountStageEditor(root: HTMLElement): Editor {
       if (layer.terrain) {
         drawWangLayer(g, layer.terrain, terrainsById, rank, (r) => L.tileImg.get(r), ts, d.cols, d.rows);
         drawCliffWalls(g, layer, d, ts);
+        drawCliffEdges(g, layer, d, ts);
       }
     }
 
@@ -779,6 +780,37 @@ export function mountStageEditor(root: HTMLElement): Editor {
     }
   }
 
+  /** Draw a kind-"cliff" terrain: the hand-drawn south-face tile, rotated onto
+   * every exposed edge of the painted region (south as-drawn, west +90°, east
+   * −90°, north 180°). Uses the real art directly — no synthesis. South is drawn
+   * last so the main drop reads on top; corners get two overlaid faces. */
+  function drawCliffEdges(g: CanvasRenderingContext2D, layer: StageLayer, d: StageDoc, ts: number): void {
+    const mem = layer.terrain;
+    if (!mem) return;
+    for (const t of getProject().terrains) {
+      if (t.kind !== "cliff" || !t.faceRef) continue;
+      const face = L.tileImg.get(t.faceRef);
+      if (!face) continue;
+      const isC = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < d.cols && y < d.rows && mem[y]?.[x] === t.id;
+      const rot = (x: number, y: number, deg: number): void => {
+        g.save();
+        g.translate((x + 0.5) * ts, (y + 0.5) * ts);
+        g.rotate((deg * Math.PI) / 180);
+        g.drawImage(face, 0, 0, face.width, face.height, -ts / 2, -ts / 2, ts, ts);
+        g.restore();
+      };
+      for (let y = 0; y < d.rows; y++) {
+        for (let x = 0; x < d.cols; x++) {
+          if (!isC(x, y)) continue;
+          if (!isC(x, y - 1)) rot(x, y, 180); // north (back) edge
+          if (!isC(x - 1, y)) rot(x, y, 90);  // west face
+          if (!isC(x + 1, y)) rot(x, y, -90); // east face
+          if (!isC(x, y + 1)) rot(x, y, 0);   // south drop (drawn last/on top)
+        }
+      }
+    }
+  }
+
   /** Scale a tile into a square `size`×`size` canvas. */
   function square(img: HTMLCanvasElement, size: number): HTMLCanvasElement {
     const c = newCanvas(size, size);
@@ -932,35 +964,24 @@ export function mountStageEditor(root: HTMLElement): Editor {
    * wang terrain, but painted on an OVERLAY layer so the raised tier's terrain
    * shows through the transparent interior and faces draw on every edge. Paint
    * a smaller region inside an existing one for the next elevation tier. */
-  /** Generate a full 16-tile cliff-edge set from the selected south-facing face
-   * tile (rock + grass lip) and set it up as an elevation overlay terrain — the
-   * artist only draws one front face; we orient it onto every edge/corner. */
-  async function makeCliffFromFace(): Promise<void> {
+  /** Make a cliff from the selected south-facing face tile: paint a region on
+   * the elevation overlay and the tool draws that one tile (rotated) on every
+   * exposed edge — real art, faces on all sides, tiers nest by painting inside. */
+  function makeCliffFromFace(): void {
     const d = doc();
     if (!d) return;
     if (!L.activeRef) { setStatus("Click the south-facing cliff-face tile in the palette first"); return; }
-    const face = L.tileImg.get(L.activeRef);
-    if (!face) { setStatus("Face tile art not loaded"); return; }
-    const size = d.tileSize || 96;
-    const sheet = generateCliffWang(square(face, size), size);
-    const dataUrl = await blobToDataUrl(await canvasToBlob(sheet));
-    const source = await importSourceDataUrl(uid("src"), "cliff", dataUrl);
-    const tsId = uid("ts");
-    const tiles: TileDef[] = Array.from({ length: 16 }, (_, i) => ({ id: uid("t"), char: "", name: `c${i}`, x: i * size, y: 0, w: size, h: size, blocked: false, sightBlocked: false, tags: [] }));
-    const tileset: TilesetDoc = { id: tsId, name: "cliff", sourceId: source.id, chroma: { enabled: false, tolerance: 0, fringe: 0 }, tileSize: size, grid: { offsetX: 0, offsetY: 0, cols: 16, rows: 1, cellW: size, cellH: size, spacing: 0, inset: 0 }, tiles };
-    const roles: Record<number, string> = {};
-    for (let i = 0; i < 16; i++) roles[i] = `${tsId}/${tiles[i].id}`;
-    const tier = getProject().terrains.filter((t) => /cliff|tier/i.test(t.name)).length + 1;
-    const terrain: Terrain = { id: uid("terr"), name: `cliff-tier-${tier}`, tilesetId: tsId, kind: "wang", roles };
+    if (!L.tileImg.get(L.activeRef)) { setStatus("Face tile art not loaded"); return; }
+    const tier = getProject().terrains.filter((t) => t.kind === "cliff").length + 1;
+    const terrain: Terrain = { id: uid("terr"), name: `cliff-tier-${tier}`, tilesetId: L.activeRef.split("/")[0], kind: "cliff", roles: {}, faceRef: L.activeRef };
     mutate((p) => {
-      p.sources.push(source); p.tilesets.push(tileset); p.terrains.push(terrain);
+      p.terrains.push(terrain);
       if (d.layers.length < 2) d.layers.push({ id: uid("ly"), name: "elevation", visible: true, data: makeGrid(d.cols, d.rows, null) });
     });
-    await ensureTileImages();
     L.activeLayer = d.layers.length - 1;
     L.activeTerrainId = terrain.id;
     L.tool = "terrain";
-    setStatus(`Generated cliff "${terrain.name}" from face tile — paint a raised region on the elevation overlay; faces orient on all sides, tiers nest`);
+    setStatus(`Cliff "${terrain.name}" from face tile — paint a raised region on the elevation overlay; the face draws on every exposed edge, tiers nest`);
     renderSidebar();
     renderInspector();
     vp.render();
