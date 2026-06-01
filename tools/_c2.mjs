@@ -13,7 +13,7 @@ await page.waitForSelector("#tabs .tab");
 const b64 = p => "data:image/png;base64," + readFileSync(p).toString("base64");
 await page.evaluate(([g, c]) => { window.__g = g; window.__c = c; }, [
   b64("/mnt/nxt-dev/tib/assetsources/newtiles1-fixed.png"),
-  b64("/mnt/nxt-dev/tib/assetsources/newcliffs1.png"),
+  b64("/mnt/nxt-dev/tib/assetsources/newcliff2.png"),
 ]);
 const setField = async (l, v) => { const loc = page.locator(`label.field:has(span.field-label:text-is("${l}")) input`).first(); await loc.fill(String(v)); await loc.dispatchEvent("input"); await page.waitForTimeout(50); };
 const importVar = async (vn, nm) => { await page.evaluate(async ([v, n]) => { const blob = await (await fetch(window[v])).blob(); const file = new File([blob], n, { type: "image/png" }); const o = HTMLInputElement.prototype.click; HTMLInputElement.prototype.click = function () { const dt = new DataTransfer(); dt.items.add(file); Object.defineProperty(this, "files", { value: dt.files, configurable: true }); this.dispatchEvent(new Event("change")); HTMLInputElement.prototype.click = o; }; }, [vn, nm]); await page.click("button:has-text('Import images')"); await page.waitForTimeout(400); };
@@ -24,7 +24,7 @@ const lastTerrain = () => page.locator('.inspector .section:has(h3:text-is("Terr
 await page.click("#tabs .tab:has-text('Tile')");
 await page.click("button:has-text('New tileset')"); await importVar("__g", "grass.png"); await importVar("__c", "cliff.png");
 await pickSource(0); await setField("Min size", 120); await page.click("button:has-text('Auto-detect tiles')"); await page.waitForTimeout(500);
-await page.click("button:has-text('New tileset')"); await pickSource(1); await setField("Cols", 4); await setField("Rows", 4); await setField("Cell W", 313); await setField("Cell H", 313); await setField("Output tile size", 96); await page.click("button:has-text('Generate from grid')"); await page.waitForTimeout(400);
+await page.click("button:has-text('New tileset')"); await pickSource(1); await setField("Cols", 4); await setField("Rows", 4); await setField("Cell W", 256); await setField("Cell H", 256); await setField("Output tile size", 96); await page.click("button:has-text('Generate from grid')"); await page.waitForTimeout(400);
 
 const COLS = 24, ROWS = 16, TS = 96, pad = 40;
 await page.click("#tabs .tab:has-text('Stage')");
@@ -55,10 +55,10 @@ await rect(3, 5, 12, 14); // small block bottom-left
 
 const gridCb = page.locator('label.check:has-text("Grid") input'); if (await gridCb.isChecked()) await gridCb.click();
 await page.waitForTimeout(200);
-await page.screenshot({ path: `${SHOT}/35-realcliff.png` });
+await page.screenshot({ path: `${SHOT}/39-cliff2.png` });
 await page.mouse.move(Lx + Wd * 0.5, T + Hd * 0.45); for (let i = 0; i < 2; i++) { await page.mouse.wheel(0, -120); await page.waitForTimeout(40); }
 await page.waitForTimeout(150);
-await page.screenshot({ path: `${SHOT}/36-realcliff-zoom.png` });
+await page.screenshot({ path: `${SHOT}/40-cliff2-zoom.png` });
 const diag = await page.evaluate(() => {
   const p = JSON.parse(localStorage.getItem("asset-forge:project"));
   const s = p.stages[0];
